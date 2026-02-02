@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include <SdFat.h>
+#include <atomic>
 #include <errno.h>
 #include <string.h>
 
@@ -86,6 +87,19 @@ struct FileSlot {
   bool inUse = false;
 };
 
+struct HealthState {
+  std::atomic<uint32_t> lastProgressMs{0};
+  std::atomic<uint32_t> lastSuccessfulIoMs{0};
+  std::atomic<uint32_t> lastErrorMs{0};
+  std::atomic<uint32_t> consecutiveFailures{0};
+  std::atomic<uint32_t> queueDepthRequests{0};
+  std::atomic<uint32_t> queueDepthResults{0};
+  std::atomic<uint32_t> stallEvents{0};
+  std::atomic<uint8_t> currentStatus{static_cast<uint8_t>(SdStatus::Disabled)};
+  std::atomic<uint16_t> lastErrorCode{static_cast<uint16_t>(ErrorCode::Ok)};
+  std::atomic<bool> stallActive{false};
+};
+
 class DefaultSpiBusGuard : public ISpiBusGuard {
  public:
   DefaultSpiBusGuard() { _mutex = xSemaphoreCreateMutex(); }
@@ -119,6 +133,7 @@ struct Internal {
   ErrorCode lastError = ErrorCode::Ok;
   ErrorInfo lastErrorInfo{};
   FsInfo fsInfo{};
+  HealthState health{};
 
   bool initialized = false;
   bool mounted = false;
@@ -331,6 +346,7 @@ static void setStatus(Internal* st, SdStatus status) {
   portENTER_CRITICAL(&st->stateMux);
   st->status = status;
   portEXIT_CRITICAL(&st->stateMux);
+  st->health.currentStatus.store(static_cast<uint8_t>(status), std::memory_order_relaxed);
 }
 
 static void setLastError(Internal* st, ErrorCode code, Operation op, int32_t detail,
@@ -339,12 +355,13 @@ static void setLastError(Internal* st, ErrorCode code, Operation op, int32_t det
     return;
   }
 
+  const uint32_t nowMs = millis();
   portENTER_CRITICAL(&st->stateMux);
   st->lastError = code;
   st->lastErrorInfo.code = code;
   st->lastErrorInfo.op = op;
   st->lastErrorInfo.detail = detail;
-  st->lastErrorInfo.timestampMs = millis();
+  st->lastErrorInfo.timestampMs = nowMs;
   st->lastErrorInfo.bytesRequested = bytesReq;
   st->lastErrorInfo.bytesProcessed = bytesDone;
 
@@ -355,6 +372,37 @@ static void setLastError(Internal* st, ErrorCode code, Operation op, int32_t det
     st->lastErrorInfo.path = nullptr;
   }
   portEXIT_CRITICAL(&st->stateMux);
+
+  st->health.lastErrorCode.store(static_cast<uint16_t>(code), std::memory_order_relaxed);
+  st->health.lastErrorMs.store(nowMs, std::memory_order_relaxed);
+}
+
+static void recordProgress(Internal* st, uint32_t nowMs) {
+  if (!st) {
+    return;
+  }
+  st->health.lastProgressMs.store(nowMs, std::memory_order_relaxed);
+}
+
+static void recordSuccess(Internal* st) {
+  if (!st) {
+    return;
+  }
+  st->health.consecutiveFailures.store(0, std::memory_order_relaxed);
+}
+
+static void recordFailure(Internal* st) {
+  if (!st) {
+    return;
+  }
+  st->health.consecutiveFailures.fetch_add(1, std::memory_order_relaxed);
+}
+
+static void recordIoSuccess(Internal* st, uint32_t nowMs) {
+  if (!st) {
+    return;
+  }
+  st->health.lastSuccessfulIoMs.store(nowMs, std::memory_order_relaxed);
 }
 
 static bool lockBus(Internal* st, const SdCardConfig& cfg) {
@@ -564,6 +612,17 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
                                                                       : SdStatus::NoCard)
                                             : SdStatus::NoCard);
+  const uint32_t nowMs = millis();
+  _internal->health.lastProgressMs.store(nowMs, std::memory_order_relaxed);
+  _internal->health.lastSuccessfulIoMs.store(0, std::memory_order_relaxed);
+  _internal->health.lastErrorMs.store(0, std::memory_order_relaxed);
+  _internal->health.consecutiveFailures.store(0, std::memory_order_relaxed);
+  _internal->health.queueDepthRequests.store(0, std::memory_order_relaxed);
+  _internal->health.queueDepthResults.store(0, std::memory_order_relaxed);
+  _internal->health.stallEvents.store(0, std::memory_order_relaxed);
+  _internal->health.lastErrorCode.store(static_cast<uint16_t>(ErrorCode::Ok),
+                                        std::memory_order_relaxed);
+  _internal->health.stallActive.store(false, std::memory_order_relaxed);
 
   if (_config.useWorkerTask) {
     _internal->stopWorker = false;
@@ -706,6 +765,9 @@ void SdCardManager::end() {
 
   _internal->initialized = false;
   setStatus(_internal, SdStatus::Disabled);
+  _internal->health.stallActive.store(false, std::memory_order_relaxed);
+  _internal->health.queueDepthRequests.store(0, std::memory_order_relaxed);
+  _internal->health.queueDepthResults.store(0, std::memory_order_relaxed);
 }
 
 void SdCardManager::poll() {
@@ -750,6 +812,34 @@ ErrorInfo SdCardManager::lastErrorInfo() const {
   return info;
 }
 
+WorkerHealth SdCardManager::getWorkerHealth() const {
+  WorkerHealth health{};
+  if (!_internal) {
+    health.currentStatus = SdStatus::Disabled;
+    health.lastErrorCode = ErrorCode::InternalError;
+    return health;
+  }
+  health.lastProgressMs =
+      _internal->health.lastProgressMs.load(std::memory_order_relaxed);
+  health.lastSuccessfulIoMs =
+      _internal->health.lastSuccessfulIoMs.load(std::memory_order_relaxed);
+  health.lastErrorMs =
+      _internal->health.lastErrorMs.load(std::memory_order_relaxed);
+  health.consecutiveFailures =
+      _internal->health.consecutiveFailures.load(std::memory_order_relaxed);
+  health.queueDepthRequests =
+      _internal->health.queueDepthRequests.load(std::memory_order_relaxed);
+  health.queueDepthResults =
+      _internal->health.queueDepthResults.load(std::memory_order_relaxed);
+  health.stallEvents =
+      _internal->health.stallEvents.load(std::memory_order_relaxed);
+  health.currentStatus =
+      static_cast<SdStatus>(_internal->health.currentStatus.load(std::memory_order_relaxed));
+  health.lastErrorCode =
+      static_cast<ErrorCode>(_internal->health.lastErrorCode.load(std::memory_order_relaxed));
+  return health;
+}
+
 FsInfo SdCardManager::fsInfo() const {
   FsInfo info{};
   if (!_internal) {
@@ -774,6 +864,10 @@ static bool enqueueInternal(Internal* st, const SdCardConfig& cfg, RequestType t
                             ResultCallback cb, void* user) {
   if (!st || !st->initialized) {
     setLastError(st, ErrorCode::NotInitialized, Operation::Enqueue, 0, path, length, 0);
+    return false;
+  }
+  if (st->health.stallActive.load(std::memory_order_relaxed)) {
+    setLastError(st, ErrorCode::Fault, Operation::Enqueue, 0, path, length, 0);
     return false;
   }
 
@@ -831,7 +925,9 @@ static bool enqueueInternal(Internal* st, const SdCardConfig& cfg, RequestType t
 
   st->reqTail = static_cast<uint8_t>((st->reqTail + 1) % st->reqDepth);
   st->reqCount++;
+  const uint8_t depth = st->reqCount;
   portEXIT_CRITICAL(&st->queueMux);
+  st->health.queueDepthRequests.store(depth, std::memory_order_relaxed);
   return true;
 }
 
@@ -984,8 +1080,11 @@ bool SdCardManager::getResult(RequestId id, RequestResult* out) {
       *out = slot.result;
       slot.inUse = false;
       _internal->resCount--;
+      const uint8_t depth = _internal->resCount;
+      portEXIT_CRITICAL(&_internal->queueMux);
+      _internal->health.queueDepthResults.store(depth, std::memory_order_relaxed);
       found = true;
-      break;
+      return true;
     }
   }
   portEXIT_CRITICAL(&_internal->queueMux);
@@ -1009,8 +1108,10 @@ bool SdCardManager::popResult(RequestResult* out) {
       *out = slot.result;
       slot.inUse = false;
       _internal->resCount--;
+      const uint8_t depth = _internal->resCount;
       _internal->resHead = static_cast<uint8_t>((idx + 1) % _internal->resDepth);
       portEXIT_CRITICAL(&_internal->queueMux);
+      _internal->health.queueDepthResults.store(depth, std::memory_order_relaxed);
       return true;
     }
     idx = static_cast<uint8_t>((idx + 1) % _internal->resDepth);
@@ -1054,7 +1155,9 @@ static void enqueueResult(Internal* st, const Request& req, ErrorCode code,
   slot.result = result;
   st->resTail = static_cast<uint8_t>((st->resTail + 1) % st->resDepth);
   st->resCount++;
+  const uint8_t depth = st->resCount;
   portEXIT_CRITICAL(&st->queueMux);
+  st->health.queueDepthResults.store(depth, std::memory_order_relaxed);
 }
 
 static FileSlot* getFileSlot(Internal* st, FileHandle handle) {
@@ -1204,6 +1307,7 @@ static void failAllPending(Internal* st, ErrorCode code) {
       st->reqTail = 0;
       st->reqCount = 0;
       portEXIT_CRITICAL(&st->queueMux);
+      st->health.queueDepthRequests.store(0, std::memory_order_relaxed);
       break;
     }
     portEXIT_CRITICAL(&st->queueMux);
@@ -1260,6 +1364,10 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
   const uint32_t startUs = micros();
   const uint32_t nowMs = millis();
 
+  if (_internal->health.stallActive.load(std::memory_order_relaxed)) {
+    return;
+  }
+
   updateCdPresence(_internal, _config, nowMs);
 
   // Auto-mount/unmount decisions
@@ -1272,6 +1380,7 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         deadlineReached(nowMs, _internal->lastProbeMs + _config.probeIntervalMs)) {
       const bool ok = probeCard(_internal, _config);
       _internal->lastProbeMs = nowMs;
+      recordProgress(_internal, nowMs);
       if (ok) {
         _internal->probeFailures.recordSuccess();
       } else if (_internal->probeFailures.recordFailure()) {
@@ -1281,18 +1390,54 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
     }
   }
 
+  uint8_t pendingRequests = 0;
+  portENTER_CRITICAL(&_internal->queueMux);
+  pendingRequests = _internal->reqCount;
+  portEXIT_CRITICAL(&_internal->queueMux);
+
+  const bool hasPendingWork = (pendingRequests > 0) || _internal->pendingAutoMount ||
+                              _internal->pendingAutoUnmount;
+  if (!hasPendingWork) {
+    recordProgress(_internal, nowMs);
+  }
+
+  if (_config.workerStallMs > 0 && hasPendingWork) {
+    const uint32_t lastProgress =
+        _internal->health.lastProgressMs.load(std::memory_order_relaxed);
+    if (lastProgress > 0 &&
+        deadlineReached(nowMs, lastProgress + _config.workerStallMs)) {
+      bool expected = false;
+      if (_internal->health.stallActive.compare_exchange_strong(
+              expected, true, std::memory_order_relaxed)) {
+        _internal->health.stallEvents.fetch_add(1, std::memory_order_relaxed);
+        setLastError(_internal, ErrorCode::Fault, Operation::None, 0, nullptr, 0, 0);
+        setStatus(_internal, SdStatus::Fault);
+        recordFailure(_internal);
+        _internal->pendingAutoMount = false;
+        _internal->pendingAutoUnmount = false;
+        failAllPending(_internal, ErrorCode::Fault);
+        (void)performUnmount(_internal, _config);
+      }
+      return;
+    }
+  }
+
   if (_internal->pendingAutoUnmount) {
     _internal->pendingAutoUnmount = false;
     ErrorCode unmountCode = performUnmount(_internal, _config);
     if (unmountCode != ErrorCode::Ok) {
       setLastError(_internal, unmountCode, Operation::Unmount, 0, nullptr, 0, 0);
       setStatus(_internal, SdStatus::Error);
+      recordFailure(_internal);
+      recordProgress(_internal, nowMs);
       _internal->pendingAutoUnmount = true;
       return;
     }
     setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
                                                                         : SdStatus::NoCard)
                                               : SdStatus::NoCard);
+    recordSuccess(_internal);
+    recordProgress(_internal, nowMs);
     failAllPending(_internal, ErrorCode::NotReady);
     if (budgetExceeded(startUs, budgetUs)) {
       return;
@@ -1305,11 +1450,14 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
     if (st == ErrorCode::Ok) {
       setStatus(_internal, SdStatus::Ready);
       _internal->backoff.onSuccess(nowMs, _config.probeIntervalMs);
+      recordSuccess(_internal);
     } else {
       setLastError(_internal, st, Operation::Mount, 0, nullptr, 0, 0);
       setStatus(_internal, SdStatus::Error);
       _internal->backoff.onFailure(nowMs);
+      recordFailure(_internal);
     }
+    recordProgress(_internal, nowMs);
     if (budgetExceeded(startUs, budgetUs)) {
       return;
     }
@@ -1340,7 +1488,11 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
     slot.inUse = false;
     _internal->reqHead = static_cast<uint8_t>((_internal->reqHead + 1) % _internal->reqDepth);
     _internal->reqCount--;
+    const uint8_t depth = _internal->reqCount;
     portEXIT_CRITICAL(&_internal->queueMux);
+    _internal->health.queueDepthRequests.store(depth, std::memory_order_relaxed);
+    recordFailure(_internal);
+    recordProgress(_internal, nowReqMs);
     return;
   }
 
@@ -1460,8 +1612,13 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         bytesDone = req.processed;
       }
       unlockBus(_internal);
+      const uint32_t ioMs = millis();
+      if (code == ErrorCode::Ok && readCount > 0) {
+        recordIoSuccess(_internal, ioMs);
+      }
       if (code == ErrorCode::Ok && req.processed < req.length && readCount > 0 &&
           !budgetExceeded(startUs, budgetUs)) {
+        recordProgress(_internal, ioMs);
         return;
       }
       break;
@@ -1520,8 +1677,13 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         bytesDone = req.processed;
       }
       unlockBus(_internal);
+      const uint32_t ioMs = millis();
+      if (code == ErrorCode::Ok && written > 0) {
+        recordIoSuccess(_internal, ioMs);
+      }
       if (code == ErrorCode::Ok && req.processed < req.length &&
           !budgetExceeded(startUs, budgetUs)) {
+        recordProgress(_internal, ioMs);
         return;
       }
       break;
@@ -1542,6 +1704,8 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
       }
       if (!slotFile->file.sync()) {
         code = ErrorCode::IoError;
+      } else {
+        recordIoSuccess(_internal, millis());
       }
       unlockBus(_internal);
       break;
@@ -1628,13 +1792,19 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         _internal->probeFailures.reset();
       }
     }
+    recordFailure(_internal);
+  } else {
+    recordSuccess(_internal);
   }
 
+  recordProgress(_internal, millis());
   portENTER_CRITICAL(&_internal->queueMux);
   slot.inUse = false;
   _internal->reqHead = static_cast<uint8_t>((_internal->reqHead + 1) % _internal->reqDepth);
   _internal->reqCount--;
+  const uint8_t depth = _internal->reqCount;
   portEXIT_CRITICAL(&_internal->queueMux);
+  _internal->health.queueDepthRequests.store(depth, std::memory_order_relaxed);
 }
 
 }  // namespace AsyncSD

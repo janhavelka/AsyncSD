@@ -41,6 +41,7 @@ enum class ErrorCode : uint16_t {
   Ok = 0,
   Timeout,
   Busy,
+  Fault,
   BusNotAvailable,
   CardInitFailed,
   MountFailed,
@@ -151,6 +152,36 @@ struct FsInfo {
 
   /// @brief True if usedBytes is valid.
   bool usedBytesValid = false;
+};
+
+/// @brief Worker health metrics snapshot.
+struct WorkerHealth {
+  /// @brief Timestamp of last worker progress (millis).
+  uint32_t lastProgressMs = 0;
+
+  /// @brief Timestamp of last successful read/write/sync (millis).
+  uint32_t lastSuccessfulIoMs = 0;
+
+  /// @brief Timestamp of last error (millis).
+  uint32_t lastErrorMs = 0;
+
+  /// @brief Consecutive failure counter.
+  uint32_t consecutiveFailures = 0;
+
+  /// @brief Current request queue depth.
+  uint32_t queueDepthRequests = 0;
+
+  /// @brief Current result queue depth.
+  uint32_t queueDepthResults = 0;
+
+  /// @brief Number of detected worker stalls.
+  uint32_t stallEvents = 0;
+
+  /// @brief Current worker status.
+  SdStatus currentStatus = SdStatus::Disabled;
+
+  /// @brief Last error code observed by the worker.
+  ErrorCode lastErrorCode = ErrorCode::Ok;
 };
 
 /// @brief Result for an asynchronous request.

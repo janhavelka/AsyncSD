@@ -116,6 +116,12 @@ void loop() {
 - `ErrorCode` + `ErrorInfo` returned via results and `lastErrorInfo()`
 - No silent failures
 
+**Worker Health**
+- `getWorkerHealth()` provides timestamps, queue depths, failure counters, and status snapshots
+- Soft stall watchdog: if work is pending and `millis() - lastProgressMs > workerStallMs`,
+  the worker enters `Fault`, rejects new requests (`ErrorCode::Fault`), fails pending requests,
+  and attempts a safe unmount
+
 ---
 
 ## Config Highlights
@@ -133,6 +139,7 @@ cfg.maxOpenFiles = 4;
 cfg.maxPathLength = 96;
 cfg.ioChunkBytes = 512;
 cfg.workerBudgetUs = 2000;
+cfg.workerStallMs = 5000;
 ```
 
 See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
@@ -210,7 +217,6 @@ if (sd.getResult(id, &res)) {
 
 | Example                | Description                                |
 | ---------------------- | ------------------------------------------ |
-| `00_compile_only`      | Minimal compile verification                |
 | `01_spi_cli_control`   | Interactive CLI to exercise the full API   |
 
 ---

@@ -130,6 +130,12 @@ class SdCardManager {
   ErrorInfo lastErrorInfo() const;
 
   /**
+   * @brief Get worker health metrics snapshot.
+   * @note Snapshot uses atomics and may be slightly stale.
+   */
+  WorkerHealth getWorkerHealth() const;
+
+  /**
    * @brief Get filesystem info snapshot.
    */
   FsInfo fsInfo() const;
@@ -270,7 +276,7 @@ class SdCardManager {
    * @param out Output result structure.
    * @return true if a result was popped.
    */
- bool popResult(RequestResult* out);
+  bool popResult(RequestResult* out);
 
  private:
   Internal* _internal = nullptr;

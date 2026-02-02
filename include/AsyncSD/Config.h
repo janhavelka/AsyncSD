@@ -146,6 +146,9 @@ struct SdCardConfig {
   /// @brief Worker step time budget in microseconds.
   uint32_t workerBudgetUs = 2000;
 
+  /// @brief Worker stall detection threshold (ms). Set to 0 to disable.
+  uint32_t workerStallMs = 5000;
+
   /// @brief Timeout waiting for worker shutdown (ms).
   uint32_t shutdownTimeoutMs = 250;
 

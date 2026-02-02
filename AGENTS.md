@@ -27,7 +27,6 @@ include/AsyncSD/      - Public API headers ONLY (Doxygen documented)
   |-- AsyncSD.h       - Main library class
 src/                  - Implementation (.cpp files)
 examples/
-  |-- 00_compile_only/
   |-- 01_spi_cli_control/
   |-- common/         - Example-only helpers (Log.h, BoardPins.h)
 platformio.ini        - Build environments (uses build_src_filter)
@@ -58,21 +57,26 @@ AGENTS.md             - This file
 - No unbounded loops or waits
 - **No `delay()` in library code** (FreeRTOS `vTaskDelay` only in worker task)
 
-### 3) Deterministic State Machines
+### 3) Worker Health + Stall Detection
+- Maintain worker health metrics (progress timestamps, queue depths, failure counts)
+- Soft stall watchdog via `workerStallMs`
+- On stall: enter `Fault`, reject new requests, fail pending requests, attempt safe unmount
+
+### 4) Deterministic State Machines
 - Explicit, simple state machines over clever event chains
 - Presence detection and mount/unmount are deterministic and bounded
 
-### 4) No SPI Bus Ownership
+### 5) No SPI Bus Ownership
 - Do NOT call `spi_bus_initialize()` or assume exclusive SPI ownership
 - Use user-provided `ISpiBusGuard` with bounded lock timeouts
 - If no guard is provided, use an internal mutex guard (still bounded)
 - Do not hold the bus longer than a single bounded operation
 
-### 5) SdFat v2 with FAT32 + exFAT
+### 6) SdFat v2 with FAT32 + exFAT
 - Use **SdFat v2** with `SdFs` + `FsFile` to support FAT32 + exFAT
 - Detect/report filesystem type and capacity where feasible
 
-### 6) Optional Card Detect (CD) Pin + No-CD Probe Logic
+### 7) Optional Card Detect (CD) Pin + No-CD Probe Logic
 - `cdPin == -1` disables CD functionality
 - If CD pin is used:
   - Debounce via configurable window
@@ -82,16 +86,16 @@ AGENTS.md             - This file
   - Require N consecutive failures to declare removal
   - Clean unmount/cleanup on removal (bounded)
 
-### 7) Memory & Allocation Rules
+### 8) Memory & Allocation Rules
 - Allocate buffers and queues in `begin()`
 - **Zero allocations** in `workerStep()` and steady state
 - Fixed-size buffers/ring buffers only
 
-### 8) Threading Rules
+### 9) Threading Rules
 - **Only the worker** touches SdFat objects and open file handles
 - Public APIs enqueue requests and read atomic snapshots only
 
-### 9) Logging
+### 10) Logging
 - **Library code: NO logging**
 - Examples may log via `examples/common/Log.h`
 
