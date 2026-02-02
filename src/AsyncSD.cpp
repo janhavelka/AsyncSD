@@ -177,6 +177,8 @@ struct Internal {
   portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 };
 
+static ErrorCode performUnmount(Internal* st, const SdCardConfig& cfg);
+
 static inline bool deadlineReached(uint32_t nowMs, uint32_t deadlineMs) {
   return static_cast<int32_t>(nowMs - deadlineMs) >= 0;
 }
@@ -229,16 +231,17 @@ static Operation opFromRequest(RequestType type) {
   }
 }
 
-static FsType mapFsType(uint8_t fsType) {
-  switch (fsType) {
-    case FS_FAT12:
+static FsType mapFsType(uint8_t fatType) {
+  if (fatType == FAT_TYPE_EXFAT) {
+    return FsType::ExFat;
+  }
+  switch (fatType) {
+    case 12:
       return FsType::Fat12;
-    case FS_FAT16:
+    case 16:
       return FsType::Fat16;
-    case FS_FAT32:
+    case 32:
       return FsType::Fat32;
-    case FS_EXFAT:
-      return FsType::ExFat;
     default:
       return FsType::Unknown;
   }
@@ -249,15 +252,15 @@ static void copyPath(char* dst, uint16_t dstLen, const char* src) {
     return;
   }
   if (!src) {
-    dst[0] = '\\0';
+    dst[0] = '\0';
     return;
   }
   const size_t maxCopy = static_cast<size_t>(dstLen - 1);
   size_t i = 0;
-  for (; i < maxCopy && src[i] != '\\0'; ++i) {
+  for (; i < maxCopy && src[i] != '\0'; ++i) {
     dst[i] = src[i];
   }
-  dst[i] = '\\0';
+  dst[i] = '\0';
 }
 
 static bool normalizePath(const SdCardConfig& cfg, const char* in, char* out, uint16_t outLen) {
@@ -267,10 +270,10 @@ static bool normalizePath(const SdCardConfig& cfg, const char* in, char* out, ui
 
   const char* src = in;
   const char* mp = cfg.mountPoint;
-  if (mp && mp[0] != '\\0') {
+  if (mp && mp[0] != '\0') {
     const size_t mpLen = strlen(mp);
     if (mpLen > 0 && strncmp(src, mp, mpLen) == 0) {
-      if (src[mpLen] == '\\0' || src[mpLen] == '/') {
+      if (src[mpLen] == '\0' || src[mpLen] == '/') {
         src += mpLen;
         if (*src == '/') {
           src++;
@@ -279,8 +282,8 @@ static bool normalizePath(const SdCardConfig& cfg, const char* in, char* out, ui
     }
   }
 
-  if (*src == '\\0') {
-    src = \"/\";
+  if (*src == '\0') {
+    src = "/";
   }
 
   const size_t srcLen = strlen(src);
@@ -437,6 +440,10 @@ SdCardManager::~SdCardManager() {
 
 bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   if (!_internal) {
+    return false;
+  }
+  if (_internal->initialized) {
+    setLastError(_internal, ErrorCode::Busy, Operation::Begin, 0, nullptr, 0, 0);
     return false;
   }
 
@@ -645,20 +652,31 @@ void SdCardManager::end() {
 
   if (_internal->task) {
     _internal->stopWorker = true;
+    if (xTaskGetCurrentTaskHandle() == _internal->task) {
+      // Called from worker context; let the task exit on its own.
+      return;
+    }
     const uint32_t startMs = millis();
     while (_internal->workerRunning &&
            !deadlineReached(millis(), startMs + _config.shutdownTimeoutMs)) {
       vTaskDelay(pdMS_TO_TICKS(1));
     }
+    if (_internal->workerRunning) {
+      setLastError(_internal, ErrorCode::Timeout, Operation::End, 0, nullptr, 0, 0);
+      setStatus(_internal, SdStatus::Fault);
+      // Force-stop the worker to avoid use-after-free.
+      vTaskDelete(_internal->task);
+      _internal->workerRunning = false;
+    }
     _internal->task = nullptr;
   }
 
   if (_internal->mounted) {
-    closeAllFiles(_internal);
-    if (_internal->transport) {
-      _internal->transport->end(_internal);
+    const ErrorCode unmountCode = performUnmount(_internal, _config);
+    if (unmountCode != ErrorCode::Ok) {
+      setLastError(_internal, unmountCode, Operation::Unmount, 0, nullptr, 0, 0);
+      setStatus(_internal, SdStatus::Fault);
     }
-    _internal->mounted = false;
   }
 
   if (_internal->guardOwned && _internal->guard) {
@@ -866,7 +884,8 @@ RequestId SdCardManager::requestClose(FileHandle handle, ResultCallback cb, void
 
 RequestId SdCardManager::requestRead(FileHandle handle, uint64_t offset, void* dst,
                                      size_t len, ResultCallback cb, void* user) {
-  if (!_internal || handle == INVALID_FILE_HANDLE || !dst || len == 0) {
+  if (!_internal || handle == INVALID_FILE_HANDLE || !dst || len == 0 ||
+      len > UINT32_MAX) {
     if (_internal) {
       setLastError(_internal, ErrorCode::InvalidArgument, Operation::Read, 0, nullptr,
                    static_cast<uint32_t>(len), 0);
@@ -882,7 +901,8 @@ RequestId SdCardManager::requestRead(FileHandle handle, uint64_t offset, void* d
 
 RequestId SdCardManager::requestWrite(FileHandle handle, uint64_t offset, const void* src,
                                       size_t len, ResultCallback cb, void* user) {
-  if (!_internal || handle == INVALID_FILE_HANDLE || !src || len == 0) {
+  if (!_internal || handle == INVALID_FILE_HANDLE || !src || len == 0 ||
+      len > UINT32_MAX) {
     if (_internal) {
       setLastError(_internal, ErrorCode::InvalidArgument, Operation::Write, 0, nullptr,
                    static_cast<uint32_t>(len), 0);
@@ -1076,6 +1096,17 @@ static void closeAllFiles(Internal* st) {
   }
 }
 
+static void markAllFilesClosed(Internal* st) {
+  if (!st) {
+    return;
+  }
+  for (uint8_t i = 0; i < st->maxOpenFiles; ++i) {
+    if (st->files[i].inUse) {
+      st->files[i].inUse = false;
+    }
+  }
+}
+
 static ErrorCode performMount(Internal* st, const SdCardConfig& cfg) {
   if (!st || !st->sd) {
     return ErrorCode::InternalError;
@@ -1112,7 +1143,7 @@ static ErrorCode performMount(Internal* st, const SdCardConfig& cfg) {
   return ErrorCode::Ok;
 }
 
-static ErrorCode performUnmount(Internal* st) {
+static ErrorCode performUnmount(Internal* st, const SdCardConfig& cfg) {
   if (!st || !st->sd) {
     return ErrorCode::InternalError;
   }
@@ -1120,10 +1151,22 @@ static ErrorCode performUnmount(Internal* st) {
     return ErrorCode::Ok;
   }
 
-  closeAllFiles(st);
-  if (st->transport) {
-    st->transport->end(st);
+  if (!st->transport) {
+    return ErrorCode::InternalError;
   }
+
+  const bool locked = lockBus(st, cfg);
+  if (!locked) {
+    // Best-effort logical close without touching the bus.
+    markAllFilesClosed(st);
+    st->mounted = false;
+    st->fsInfo = FsInfo{};
+    return ErrorCode::BusNotAvailable;
+  }
+
+  closeAllFiles(st);
+  st->transport->end(st);
+  unlockBus(st);
   st->mounted = false;
   st->fsInfo = FsInfo{};
   return ErrorCode::Ok;
@@ -1240,7 +1283,13 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
 
   if (_internal->pendingAutoUnmount) {
     _internal->pendingAutoUnmount = false;
-    performUnmount(_internal);
+    ErrorCode unmountCode = performUnmount(_internal, _config);
+    if (unmountCode != ErrorCode::Ok) {
+      setLastError(_internal, unmountCode, Operation::Unmount, 0, nullptr, 0, 0);
+      setStatus(_internal, SdStatus::Error);
+      _internal->pendingAutoUnmount = true;
+      return;
+    }
     setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
                                                                         : SdStatus::NoCard)
                                               : SdStatus::NoCard);
@@ -1317,10 +1366,14 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
       break;
     }
     case RequestType::Unmount: {
-      code = performUnmount(_internal);
-      setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
-                                                                          : SdStatus::NoCard)
-                                                : SdStatus::NoCard);
+      code = performUnmount(_internal, _config);
+      if (code == ErrorCode::Ok) {
+        setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
+                                                                            : SdStatus::NoCard)
+                                                  : SdStatus::NoCard);
+      } else {
+        setStatus(_internal, SdStatus::Error);
+      }
       break;
     }
     case RequestType::Open: {
@@ -1445,8 +1498,9 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
       req.started = true;
       if (_internal->fsInfo.fsType == FsType::Fat32) {
         const uint64_t fileSize = slotFile->file.fileSize();
-        const uint64_t target =
+        const uint64_t base =
             (req.offset == APPEND_OFFSET) ? fileSize : req.offset;
+        const uint64_t target = (fileSize > base) ? fileSize : base;
         if (target + static_cast<uint64_t>(req.length) > 0xFFFFFFFFULL) {
           code = ErrorCode::FileTooLarge;
           unlockBus(_internal);
