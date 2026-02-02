@@ -1125,7 +1125,7 @@ static ErrorCode performMount(Internal* st, const SdCardConfig& cfg) {
     return initCode;
   }
 
-  st->fsInfo.fsType = mapFsType(st->sd->fsType());
+  st->fsInfo.fsType = mapFsType(st->sd->fatType());
   if (st->fsInfo.fsType == FsType::Unknown) {
     st->transport->end(st);
     return ErrorCode::FsUnsupported;
