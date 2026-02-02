@@ -4,14 +4,14 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 1.0.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
 Please follow responsible disclosure:
 
 1. **Do NOT** open a public GitHub issue.
-2. Email the maintainer at: `YOUR_EMAIL@example.com`
+2. Email the maintainer at: `info@thymos.cz`
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce

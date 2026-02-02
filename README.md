@@ -124,6 +124,12 @@ void loop() {
 - The stall watchdog is **soft**; if SdFat blocks inside an I/O call, the worker can't update
   progress. Managers should treat `lastProgressMs` as the authoritative "liveness" signal.
 
+**Shutdown Behavior**
+- `end()` requests the worker to stop and waits up to `shutdownTimeoutMs`
+- If the worker does not stop in time, AsyncSD enters `Fault`, rejects new requests, and
+  **does not free internal resources** (safe leak > crash)
+- If a custom `ISpiBusGuard` is provided, `onWorkerStuckOrKilled()` is invoked on timeout
+
 ---
 
 ## Config Highlights
