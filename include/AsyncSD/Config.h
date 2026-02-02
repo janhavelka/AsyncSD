@@ -9,6 +9,8 @@
 
 #include <SPI.h>
 
+#include "AsyncSD/Status.h"
+
 namespace AsyncSD {
 
 /// @brief Transport selection for SD access.
@@ -168,12 +170,24 @@ struct SdCardConfig {
   /// @brief Maximum path length stored in requests (including NUL).
   uint16_t maxPathLength = 96;
 
+  /// @brief Maximum bytes to copy for requestWriteCopy().
+  uint16_t maxCopyWriteBytes = 512;
+
+  /// @brief Copy-write slot count for requestWriteCopy().
+  uint8_t copyWriteSlots = 2;
+
   // ---------------------------
   // Behavior flags
   // ---------------------------
 
   /// @brief Automatically mount when a card is detected.
   bool autoMount = true;
+
+  /// @brief Optional global result callback (worker context).
+  ResultCallback onResult = nullptr;
+
+  /// @brief User context for onResult callback.
+  void* onResultUser = nullptr;
 };
 
 }  // namespace AsyncSD

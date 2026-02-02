@@ -67,8 +67,10 @@ enum class Operation : uint8_t {
   None = 0,
   Begin,
   End,
+  Shutdown,
   Mount,
   Unmount,
+  Info,
   Open,
   Close,
   Read,
@@ -79,7 +81,8 @@ enum class Operation : uint8_t {
   Stat,
   Probe,
   Lock,
-  Enqueue
+  Enqueue,
+  ResultEnqueue
 };
 
 /// @brief Filesystem type.
@@ -91,10 +94,19 @@ enum class FsType : uint8_t {
   ExFat
 };
 
+/// @brief SD card type.
+enum class CardType : uint8_t {
+  Unknown = 0,
+  Sd1,
+  Sd2,
+  SdHC
+};
+
 /// @brief Request type enum.
 enum class RequestType : uint8_t {
   Mount = 0,
   Unmount,
+  Info,
   Open,
   Close,
   Read,
@@ -144,14 +156,83 @@ struct FsInfo {
   /// @brief Filesystem type.
   FsType fsType = FsType::Unknown;
 
-  /// @brief Total capacity in bytes.
+  /// @brief Filesystem capacity in bytes.
   uint64_t capacityBytes = 0;
 
   /// @brief Used bytes (if available).
   uint64_t usedBytes = 0;
 
+  /// @brief Free bytes (if available).
+  uint64_t freeBytes = 0;
+
+  /// @brief Cluster count.
+  uint32_t clusterCount = 0;
+
+  /// @brief Free clusters (if available).
+  uint32_t freeClusters = 0;
+
+  /// @brief Sectors per cluster.
+  uint32_t sectorsPerCluster = 0;
+
+  /// @brief Bytes per cluster.
+  uint32_t bytesPerCluster = 0;
+
   /// @brief True if usedBytes is valid.
   bool usedBytesValid = false;
+
+  /// @brief True if freeBytes is valid.
+  bool freeBytesValid = false;
+
+  /// @brief True if freeClusters is valid.
+  bool freeClustersValid = false;
+};
+
+/// @brief SD card information snapshot.
+struct CardInfo {
+  /// @brief Card type (SD1/SD2/SDHC).
+  CardType type = CardType::Unknown;
+
+  /// @brief Total card sectors (512-byte units).
+  uint64_t sectorCount = 0;
+
+  /// @brief Total card capacity in bytes.
+  uint64_t capacityBytes = 0;
+
+  /// @brief Raw card status register.
+  uint32_t cardStatus = 0;
+
+  /// @brief Raw OCR register.
+  uint32_t ocr = 0;
+
+  /// @brief CID register bytes (16).
+  uint8_t cid[16]{};
+
+  /// @brief CSD register bytes (16).
+  uint8_t csd[16]{};
+
+  /// @brief SCR register bytes (8).
+  uint8_t scr[8]{};
+
+  /// @brief SD Status register bytes (64).
+  uint8_t sds[64]{};
+
+  /// @brief True if cardStatus is valid.
+  bool cardStatusValid = false;
+
+  /// @brief True if ocr is valid.
+  bool ocrValid = false;
+
+  /// @brief True if cid is valid.
+  bool cidValid = false;
+
+  /// @brief True if csd is valid.
+  bool csdValid = false;
+
+  /// @brief True if scr is valid.
+  bool scrValid = false;
+
+  /// @brief True if sds is valid.
+  bool sdsValid = false;
 };
 
 /// @brief Worker health metrics snapshot.
@@ -212,6 +293,15 @@ struct RequestResult {
 
   /// @brief File stat result (for stat requests).
   FileStat stat{};
+
+  /// @brief Filesystem info snapshot (for info requests).
+  FsInfo fsInfo{};
+
+  /// @brief Card info snapshot (for info requests).
+  CardInfo cardInfo{};
 };
+
+/// @brief Result callback type (invoked in worker context).
+using ResultCallback = void (*)(const RequestResult& result, void* user);
 
 }  // namespace AsyncSD

@@ -140,6 +140,8 @@ cfg.maxPathLength = 96;
 cfg.ioChunkBytes = 512;
 cfg.workerBudgetUs = 2000;
 cfg.workerStallMs = 5000;
+cfg.maxCopyWriteBytes = 512;
+cfg.copyWriteSlots = 2;
 ```
 
 See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
@@ -159,6 +161,24 @@ See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
 - path (if available)
 - bytes requested / processed
 - timestamp (`millis`)
+
+---
+
+## Card + Filesystem Info
+
+Use `requestInfo()` to refresh card and filesystem details asynchronously:
+
+```cpp
+auto id = sd.requestInfo();
+AsyncSD::RequestResult res;
+if (sd.getResult(id, &res)) {
+  // res.fsInfo and res.cardInfo contain snapshots
+}
+```
+
+`cardInfo()` and `fsInfo()` return the latest snapshots, including:
+- Card type, OCR, CID/CSD/SCR/SDS raw registers
+- Filesystem capacity, used/free bytes, cluster geometry
 
 ---
 
@@ -209,7 +229,18 @@ if (sd.getResult(id, &res)) {
 
 **Buffer lifetime:** For `requestRead`/`requestWrite`, the caller must keep the buffer valid until the result is received.
 
+**Safer writes:** `requestWriteCopy()` copies data into a bounded internal pool for transient buffers
+(stack data, ISR-produced buffers, etc.). Copy size is limited by `maxCopyWriteBytes` and pool size
+by `copyWriteSlots`.
+
 **Append writes:** Use `AsyncSD::APPEND_OFFSET` as the offset to append to the end of a file.
+
+**Result overflow telemetry:** If the result queue overflows, `getDroppedResults()` increments and
+`lastErrorInfo()` reports `ResultEnqueue` with `ErrorCode::Busy`.
+
+**Optional global result callback:** Set `SdCardConfig::onResult` to receive every result in worker
+context. The callback must be fast and nonblocking, and must not call into AsyncSD in a way that
+could deadlock.
 
 ---
 

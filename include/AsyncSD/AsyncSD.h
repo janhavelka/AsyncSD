@@ -44,9 +44,6 @@ inline bool hasFlag(OpenMode value, OpenMode flag) {
 /// @brief Special offset to append to end of file.
 static constexpr uint64_t APPEND_OFFSET = UINT64_MAX;
 
-/// @brief Result callback type (invoked in worker context).
-using ResultCallback = void (*)(const RequestResult& result, void* user);
-
 /**
  * @brief SPI bus guard interface for shared bus ownership.
  *
@@ -70,6 +67,9 @@ class ISpiBusGuard {
 
   /// @brief Optional hook called before unlocking.
   virtual void endTransaction() {}
+
+  /// @brief Optional hook when worker shutdown fails or gets stuck.
+  virtual void onWorkerStuckOrKilled() {}
 };
 
 /**
@@ -141,6 +141,16 @@ class SdCardManager {
   FsInfo fsInfo() const;
 
   /**
+   * @brief Get card info snapshot.
+   */
+  CardInfo cardInfo() const;
+
+  /**
+   * @brief Get count of dropped results due to result queue overflow.
+   */
+  uint32_t getDroppedResults() const;
+
+  /**
    * @brief Check if filesystem is mounted and ready.
    */
   bool isReady() const;
@@ -171,6 +181,15 @@ class SdCardManager {
    * @note Nonblocking. Uses bounded request queue.
    */
   RequestId requestUnmount(ResultCallback cb = nullptr, void* user = nullptr);
+
+  /**
+   * @brief Enqueue a card/filesystem info refresh request.
+   * @param cb Optional callback invoked on completion (worker context).
+   * @param user User context pointer passed to callback.
+   * @return RequestId or INVALID_REQUEST_ID if enqueue failed.
+   * @note Nonblocking. Updates fsInfo() and cardInfo() snapshots.
+   */
+  RequestId requestInfo(ResultCallback cb = nullptr, void* user = nullptr);
 
   /**
    * @brief Enqueue an open request.
@@ -222,6 +241,20 @@ class SdCardManager {
    */
   RequestId requestWrite(FileHandle handle, uint64_t offset, const void* src, size_t len,
                          ResultCallback cb = nullptr, void* user = nullptr);
+
+  /**
+   * @brief Enqueue a write request with data copied into an internal pool.
+   * @param handle File handle.
+   * @param offset Byte offset to seek before writing, or APPEND_OFFSET.
+   * @param src Source buffer (copied immediately).
+   * @param len Number of bytes to write (must be <= maxCopyWriteBytes).
+   * @param cb Optional callback invoked on completion (worker context).
+   * @param user User context pointer passed to callback.
+   * @return RequestId or INVALID_REQUEST_ID if enqueue failed.
+   * @note Nonblocking. Uses bounded copy pool.
+   */
+  RequestId requestWriteCopy(FileHandle handle, uint64_t offset, const void* src, size_t len,
+                             ResultCallback cb = nullptr, void* user = nullptr);
 
   /**
    * @brief Enqueue a sync (flush) request.

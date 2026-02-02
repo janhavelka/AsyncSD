@@ -6,12 +6,14 @@
  *   help
  *   status
  *   health
+ *   info
  *   mount
  *   unmount
  *   open <path> <mode>
  *   close <handle>
  *   read <handle> <offset> <len>
  *   write <handle> <offset|append> <data>
+ *   writecopy <handle> <offset|append> <data>
  *   sync <handle>
  *   mkdir <path>
  *   rm <path>
@@ -96,6 +98,28 @@ static const char* fsTypeToStr(AsyncSD::FsType fs) {
   }
 }
 
+static const char* cardTypeToStr(AsyncSD::CardType type) {
+  switch (type) {
+    case AsyncSD::CardType::Sd1:
+      return "SD1";
+    case AsyncSD::CardType::Sd2:
+      return "SD2";
+    case AsyncSD::CardType::SdHC:
+      return "SDHC/SDXC";
+    default:
+      return "Unknown";
+  }
+}
+
+static void printHex(const uint8_t* data, size_t len) {
+  for (size_t i = 0; i < len; ++i) {
+    if (data[i] < 16) {
+      Serial.print('0');
+    }
+    Serial.print(data[i], HEX);
+  }
+}
+
 static PendingBuffer* allocBuffer(bool isRead) {
   for (auto& buf : g_buffers) {
     if (!buf.inUse) {
@@ -165,12 +189,14 @@ static void printHelp() {
   Serial.println(F("  help"));
   Serial.println(F("  status"));
   Serial.println(F("  health"));
+  Serial.println(F("  info"));
   Serial.println(F("  mount"));
   Serial.println(F("  unmount"));
   Serial.println(F("  open <path> <mode>"));
   Serial.println(F("  close <handle>"));
   Serial.println(F("  read <handle> <offset> <len>"));
   Serial.println(F("  write <handle> <offset|append> <data>"));
+  Serial.println(F("  writecopy <handle> <offset|append> <data>"));
   Serial.println(F("  sync <handle>"));
   Serial.println(F("  mkdir <path>"));
   Serial.println(F("  rm <path>"));
@@ -189,10 +215,24 @@ static void printStatus() {
   Serial.println(fsTypeToStr(fs.fsType));
   Serial.printf("Capacity bytes: %llu\n",
                 static_cast<unsigned long long>(fs.capacityBytes));
+  if (fs.usedBytesValid) {
+    Serial.printf("Used bytes: %llu\n",
+                  static_cast<unsigned long long>(fs.usedBytes));
+  }
+  if (fs.freeBytesValid) {
+    Serial.printf("Free bytes: %llu\n",
+                  static_cast<unsigned long long>(fs.freeBytes));
+  }
+  if (fs.usedBytesValid && fs.capacityBytes > 0) {
+    const uint32_t pct =
+        static_cast<uint32_t>((fs.usedBytes * 100ULL) / fs.capacityBytes);
+    Serial.printf("Used percent: %lu%%\n", static_cast<unsigned long>(pct));
+  }
 }
 
 static void printHealth() {
   const AsyncSD::ErrorInfo info = g_sd.lastErrorInfo();
+  const AsyncSD::WorkerHealth health = g_sd.getWorkerHealth();
   Serial.print(F("Last error code: "));
   Serial.println(static_cast<int>(info.code));
   Serial.print(F("Op: "));
@@ -204,6 +244,82 @@ static void printHealth() {
   if (info.path) {
     Serial.print(F("Path: "));
     Serial.println(info.path);
+  }
+  Serial.print(F("Last progress ms: "));
+  Serial.println(health.lastProgressMs);
+  Serial.print(F("Last IO ms: "));
+  Serial.println(health.lastSuccessfulIoMs);
+  Serial.print(F("Consecutive failures: "));
+  Serial.println(health.consecutiveFailures);
+  Serial.print(F("Req queue depth: "));
+  Serial.println(health.queueDepthRequests);
+  Serial.print(F("Res queue depth: "));
+  Serial.println(health.queueDepthResults);
+  Serial.print(F("Stall events: "));
+  Serial.println(health.stallEvents);
+  Serial.print(F("Dropped results: "));
+  Serial.println(g_sd.getDroppedResults());
+}
+
+static void printInfo(const AsyncSD::FsInfo& fs, const AsyncSD::CardInfo& card) {
+  Serial.println(F("=== Card Info ==="));
+  Serial.print(F("Type: "));
+  Serial.println(cardTypeToStr(card.type));
+  Serial.printf("Card capacity bytes: %llu\n",
+                static_cast<unsigned long long>(card.capacityBytes));
+  if (card.cardStatusValid) {
+    Serial.print(F("Card status: 0x"));
+    Serial.println(card.cardStatus, HEX);
+  }
+  if (card.ocrValid) {
+    Serial.print(F("OCR: 0x"));
+    Serial.println(card.ocr, HEX);
+  }
+  if (card.cidValid) {
+    Serial.print(F("CID: "));
+    printHex(card.cid, sizeof(card.cid));
+    Serial.println();
+  }
+  if (card.csdValid) {
+    Serial.print(F("CSD: "));
+    printHex(card.csd, sizeof(card.csd));
+    Serial.println();
+  }
+  if (card.scrValid) {
+    Serial.print(F("SCR: "));
+    printHex(card.scr, sizeof(card.scr));
+    Serial.println();
+  }
+  if (card.sdsValid) {
+    Serial.print(F("SDS: "));
+    printHex(card.sds, sizeof(card.sds));
+    Serial.println();
+  }
+
+  Serial.println(F("=== Filesystem Info ==="));
+  Serial.print(F("FS type: "));
+  Serial.println(fsTypeToStr(fs.fsType));
+  Serial.printf("FS capacity bytes: %llu\n",
+                static_cast<unsigned long long>(fs.capacityBytes));
+  Serial.printf("Cluster count: %lu\n", static_cast<unsigned long>(fs.clusterCount));
+  Serial.printf("Sectors/cluster: %lu\n", static_cast<unsigned long>(fs.sectorsPerCluster));
+  Serial.printf("Bytes/cluster: %lu\n", static_cast<unsigned long>(fs.bytesPerCluster));
+  if (fs.freeClustersValid) {
+    Serial.printf("Free clusters: %lu\n",
+                  static_cast<unsigned long>(fs.freeClusters));
+  }
+  if (fs.usedBytesValid) {
+    Serial.printf("Used bytes: %llu\n",
+                  static_cast<unsigned long long>(fs.usedBytes));
+  }
+  if (fs.freeBytesValid) {
+    Serial.printf("Free bytes: %llu\n",
+                  static_cast<unsigned long long>(fs.freeBytes));
+  }
+  if (fs.usedBytesValid && fs.capacityBytes > 0) {
+    const uint32_t pct =
+        static_cast<uint32_t>((fs.usedBytes * 100ULL) / fs.capacityBytes);
+    Serial.printf("Used percent: %lu%%\n", static_cast<unsigned long>(pct));
   }
 }
 
@@ -318,6 +434,10 @@ static void handleResult(const AsyncSD::RequestResult& res) {
     Serial.print(F(" handle="));
     Serial.print(res.handle);
   }
+  if (res.type == AsyncSD::RequestType::Info) {
+    Serial.println();
+    printInfo(res.fsInfo, res.cardInfo);
+  }
   Serial.println();
 }
 
@@ -333,6 +453,8 @@ static void processLine(char* line) {
     printStatus();
   } else if (strcmp(cmd, "health") == 0) {
     printHealth();
+  } else if (strcmp(cmd, "info") == 0) {
+    g_sd.requestInfo();
   } else if (strcmp(cmd, "mount") == 0) {
     g_sd.requestMount();
   } else if (strcmp(cmd, "unmount") == 0) {
@@ -399,6 +521,27 @@ static void processLine(char* line) {
         g_sd.requestWrite(static_cast<AsyncSD::FileHandle>(handle), offset,
                           buf->data, len);
     buf->id = id;
+  } else if (strcmp(cmd, "writecopy") == 0) {
+    char* h = strtok(nullptr, " ");
+    char* off = strtok(nullptr, " ");
+    char* data = strtok(nullptr, "");
+    uint32_t handle = 0;
+    if (!parseU32(h, &handle) || !off || !data) {
+      return;
+    }
+    uint64_t offset = 0;
+    if (strcmp(off, "append") == 0) {
+      offset = AsyncSD::APPEND_OFFSET;
+    } else {
+      uint32_t temp = 0;
+      if (!parseU32(off, &temp)) {
+        return;
+      }
+      offset = temp;
+    }
+    const size_t len = strnlen(data, 256);
+    g_sd.requestWriteCopy(static_cast<AsyncSD::FileHandle>(handle), offset,
+                          data, len);
   } else if (strcmp(cmd, "sync") == 0) {
     char* h = strtok(nullptr, " ");
     uint32_t handle = 0;
