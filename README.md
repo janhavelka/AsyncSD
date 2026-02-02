@@ -121,6 +121,8 @@ void loop() {
 - Soft stall watchdog: if work is pending and `millis() - lastProgressMs > workerStallMs`,
   the worker enters `Fault`, rejects new requests (`ErrorCode::Fault`), fails pending requests,
   and attempts a safe unmount
+- The stall watchdog is **soft**; if SdFat blocks inside an I/O call, the worker can't update
+  progress. Managers should treat `lastProgressMs` as the authoritative "liveness" signal.
 
 ---
 
@@ -142,6 +144,7 @@ cfg.workerBudgetUs = 2000;
 cfg.workerStallMs = 5000;
 cfg.maxCopyWriteBytes = 512;
 cfg.copyWriteSlots = 2;
+cfg.enableWorkerCallbacks = false;
 ```
 
 See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
@@ -154,7 +157,8 @@ See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
 - `NoCard`, `CardInserted`, `Mounting`, `Ready`, `Busy`, `Error`, `Fault`
 
 **ErrorCode** (examples):
-- `Timeout`, `BusNotAvailable`, `CardInitFailed`, `MountFailed`, `IoError`, `NoSpaceLeft`, `InvalidArgument`
+- `Timeout`, `BusNotAvailable`, `CardInitFailed`, `MountFailed`, `IoError`, `NoSpaceLeft`,
+  `InvalidArgument`, `NoMem`, `InvalidContext`
 
 **ErrorInfo**
 - operation (`Operation` enum)
@@ -187,7 +191,7 @@ if (sd.getResult(id, &res)) {
 **With CD pin**
 - Debounced input
 - Optional interrupt (ISR sets flag only)
- - Set `cdPin = -1` to disable CD support
+- Set `cdPin = -1` to disable CD support
 
 **Without CD pin**
 - Probe-based detection with exponential backoff
@@ -238,9 +242,9 @@ by `copyWriteSlots`.
 **Result overflow telemetry:** If the result queue overflows, `getDroppedResults()` increments and
 `lastErrorInfo()` reports `ResultEnqueue` with `ErrorCode::Busy`.
 
-**Optional global result callback:** Set `SdCardConfig::onResult` to receive every result in worker
-context. The callback must be fast and nonblocking, and must not call into AsyncSD in a way that
-could deadlock.
+**Worker callbacks (disabled by default):** Set `SdCardConfig::enableWorkerCallbacks = true` to
+allow worker-context callbacks (`req.callback` or `onResult`). Callbacks must be fast, nonblocking,
+and must not call back into AsyncSD APIs or `end()` to avoid deadlocks/UAF.
 
 ---
 

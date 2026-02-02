@@ -183,7 +183,11 @@ struct SdCardConfig {
   /// @brief Automatically mount when a card is detected.
   bool autoMount = true;
 
+  /// @brief Enable invoking callbacks from worker context. Default false.
+  bool enableWorkerCallbacks = false;
+
   /// @brief Optional global result callback (worker context).
+  /// @note Only used when enableWorkerCallbacks is true.
   ResultCallback onResult = nullptr;
 
   /// @brief User context for onResult callback.

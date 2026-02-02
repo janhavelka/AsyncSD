@@ -9,6 +9,7 @@
 #include <SdFat.h>
 #include <atomic>
 #include <errno.h>
+#include <new>
 #include <string.h>
 
 #include "InternalLogic.h"
@@ -145,6 +146,7 @@ struct Internal {
   bool stopWorker = false;
   bool spiInitialized = false;
   bool shutdownFailed = false;
+  std::atomic<bool> inCallback{false};
 
   ISpiBusGuard* guard = nullptr;
   bool guardOwned = false;
@@ -529,8 +531,15 @@ SdCardManager::SdCardManager() { _internal = new Internal(); }
 
 SdCardManager::~SdCardManager() {
   end();
-  delete _internal;
-  _internal = nullptr;
+  if (_internal) {
+    if (_internal->workerRunning) {
+      // Safe leak to avoid use-after-free if worker is still running.
+      _internal = nullptr;
+      return;
+    }
+    delete _internal;
+    _internal = nullptr;
+  }
 }
 
 bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
@@ -570,22 +579,24 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   _config = config;
 
   // Allocate resources
-  _internal->sd = new SdFs();
+  _internal->sd = new (std::nothrow) SdFs();
   if (!_internal->sd) {
-    setLastError(_internal, ErrorCode::InternalError, Operation::Begin, 0, nullptr, 0, 0);
+    setLastError(_internal, ErrorCode::NoMem, Operation::Begin, 0, nullptr, 0, 0);
     setStatus(_internal, SdStatus::Fault);
     return false;
   }
 
-  _internal->files = new FileSlot[_config.maxOpenFiles];
-  _internal->reqQueue = new RequestSlot[_config.requestQueueDepth];
-  _internal->resQueue = new ResultSlot[_config.resultQueueDepth];
-  _internal->pathPool = new char[_config.requestQueueDepth * _config.maxPathLength];
-  _internal->errorPath = new char[_config.maxPathLength];
+  _internal->files = new (std::nothrow) FileSlot[_config.maxOpenFiles];
+  _internal->reqQueue = new (std::nothrow) RequestSlot[_config.requestQueueDepth];
+  _internal->resQueue = new (std::nothrow) ResultSlot[_config.resultQueueDepth];
+  _internal->pathPool =
+      new (std::nothrow) char[_config.requestQueueDepth * _config.maxPathLength];
+  _internal->errorPath = new (std::nothrow) char[_config.maxPathLength];
   if (_config.copyWriteSlots > 0 && _config.maxCopyWriteBytes > 0) {
-  _internal->copySlots = new internal::CopyWriteSlot[_config.copyWriteSlots];
+    _internal->copySlots =
+        new (std::nothrow) internal::CopyWriteSlot[_config.copyWriteSlots];
     _internal->copySlotPool =
-        new uint8_t[_config.copyWriteSlots * _config.maxCopyWriteBytes];
+        new (std::nothrow) uint8_t[_config.copyWriteSlots * _config.maxCopyWriteBytes];
   }
 
   if (!_internal->files || !_internal->reqQueue || !_internal->resQueue ||
@@ -593,7 +604,7 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
       ((_config.copyWriteSlots > 0 && _config.maxCopyWriteBytes > 0) &&
        (!_internal->copySlots || !_internal->copySlotPool))) {
     end();
-    setLastError(_internal, ErrorCode::InternalError, Operation::Begin, 0, nullptr, 0, 0);
+    setLastError(_internal, ErrorCode::NoMem, Operation::Begin, 0, nullptr, 0, 0);
     setStatus(_internal, SdStatus::Fault);
     return false;
   }
@@ -626,20 +637,26 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   _internal->guard = guard;
   _internal->guardOwned = false;
   if (!_internal->guard) {
-    _internal->guard = new DefaultSpiBusGuard();
+    _internal->guard = new (std::nothrow) DefaultSpiBusGuard();
     _internal->guardOwned = true;
+  }
+  if (!_internal->guard) {
+    end();
+    setLastError(_internal, ErrorCode::NoMem, Operation::Begin, 0, nullptr, 0, 0);
+    setStatus(_internal, SdStatus::Fault);
+    return false;
   }
 
   _internal->transport = nullptr;
   _internal->transportOwned = true;
   if (_config.transport == TransportType::Spi) {
-    _internal->transport = new SpiTransport();
+    _internal->transport = new (std::nothrow) SpiTransport();
   } else {
-    _internal->transport = new SdmmcTransport();
+    _internal->transport = new (std::nothrow) SdmmcTransport();
   }
   if (!_internal->transport) {
     end();
-    setLastError(_internal, ErrorCode::InternalError, Operation::Begin, 0, nullptr, 0, 0);
+    setLastError(_internal, ErrorCode::NoMem, Operation::Begin, 0, nullptr, 0, 0);
     setStatus(_internal, SdStatus::Fault);
     return false;
   }
@@ -776,7 +793,9 @@ void SdCardManager::end() {
   if (_internal->task) {
     _internal->stopWorker = true;
     if (xTaskGetCurrentTaskHandle() == _internal->task) {
-      // Called from worker context; let the task exit on its own.
+      // Called from worker context; signal stop and avoid teardown.
+      setLastError(_internal, ErrorCode::InvalidContext, Operation::Shutdown, 0, nullptr, 0, 0);
+      setStatus(_internal, SdStatus::Fault);
       return;
     }
     const uint32_t startMs = millis();
@@ -960,6 +979,10 @@ static bool enqueueInternal(Internal* st, const SdCardConfig& cfg, RequestType t
   }
   if (st->health.stallActive.load(std::memory_order_relaxed)) {
     setLastError(st, ErrorCode::Fault, Operation::Enqueue, 0, path, length, 0);
+    return false;
+  }
+  if (st->inCallback.load(std::memory_order_relaxed)) {
+    setLastError(st, ErrorCode::InvalidContext, Operation::Enqueue, 0, path, length, 0);
     return false;
   }
 
@@ -1288,11 +1311,15 @@ static void enqueueResult(Internal* st, const SdCardConfig& cfg, const Request& 
   result.cardInfo = st->cardInfo;
   portEXIT_CRITICAL(&st->stateMux);
 
-  if (req.callback) {
-    req.callback(result, req.user);
-  }
-  if (cfg.onResult) {
-    cfg.onResult(result, cfg.onResultUser);
+  if (cfg.enableWorkerCallbacks) {
+    st->inCallback.store(true, std::memory_order_relaxed);
+    if (req.callback) {
+      req.callback(result, req.user);
+    }
+    if (cfg.onResult) {
+      cfg.onResult(result, cfg.onResultUser);
+    }
+    st->inCallback.store(false, std::memory_order_relaxed);
   }
 
   portENTER_CRITICAL(&st->queueMux);
