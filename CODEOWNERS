@@ -1,0 +1,11 @@
+# CODEOWNERS - Define who reviews what
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @YOUR_GITHUB_USERNAME
+
+# Public API requires careful review
+/include/ @YOUR_GITHUB_USERNAME
+
+# CI configuration
+/.github/ @YOUR_GITHUB_USERNAME

@@ -1,0 +1,41 @@
+# PlatformIO
+.pio/
+.vscode/
+.idea/
+
+# Build artifacts
+*.o
+*.a
+*.elf
+*.bin
+*.map
+
+# Python (for scripts/)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+*.code-workspace
+
+# Credentials and secrets (IMPORTANT for embedded projects)
+secrets.h
+credentials.h
+config_local.h
+wifi_credentials.h
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Auto-generated files
+include/YourLibrary/Version.h
