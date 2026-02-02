@@ -1,7 +1,7 @@
 {
-  "name": "esp32-platformio-library-template",
+  "name": "AsyncSD",
   "version": "0.1.0",
-  "description": "Robust ESP32 Arduino + PlatformIO single-library template with begin/tick/end lifecycle and Status error model.",
+  "description": "Nonblocking, bounded SD card library for ESP32-S2/S3 using SdFat v2 (FAT32 + exFAT).",
   "keywords": [
     "esp32",
     "esp32-s2",
@@ -9,7 +9,10 @@
     "arduino",
     "platformio",
     "embedded",
-    "library-template",
+    "sd",
+    "sdfat",
+    "exfat",
+    "fat32",
     "non-blocking"
   ],
   "authors": [
@@ -22,15 +25,21 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_USERNAME/esp32-platformio-library-template.git"
+    "url": "https://github.com/YOUR_USERNAME/AsyncSD.git"
   },
   "license": "MIT",
-  "homepage": "https://github.com/YOUR_USERNAME/esp32-platformio-library-template",
+  "homepage": "https://github.com/YOUR_USERNAME/AsyncSD",
   "frameworks": ["arduino"],
   "platforms": ["espressif32"],
-  "headers": ["YourLibrary/YourLib.h"],
+  "headers": ["AsyncSD/AsyncSD.h"],
   "build": {
     "includeDir": "include",
     "srcDir": "src"
-  }
+  },
+  "dependencies": [
+    {
+      "name": "SdFat",
+      "version": "^2.2.0"
+    }
+  ]
 }

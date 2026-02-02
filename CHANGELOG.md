@@ -8,35 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial library template structure
-- `begin(Config) -> Status`, `tick(now_ms)`, `end()` API pattern
-- Status/Err type with static error messages
-- Config injection pattern (no hardcoded pins)
-- Basic CLI example (`01_basic_bringup_cli`)
-- Compile-only skeleton example (`00_compile_only`)
-- GitHub Actions CI for ESP32-S2 and ESP32-S3
-- Doxygen-style documentation in public headers
+- Nothing yet
 
 ### Changed
-- Nothing yet
-
-### Deprecated
-- Nothing yet
-
-### Removed
 - Nothing yet
 
 ### Fixed
 - Nothing yet
 
-### Security
-- Nothing yet
-
-## [0.1.0] - 2026-01-10
+## [0.1.0] - 2026-02-02
 
 ### Added
-- Initial release with template structure
-- ESP32-S2 and ESP32-S3 support
+- AsyncSD nonblocking SD card manager with worker task or external worker step
+- SdFat v2 (`SdFs` + `FsFile`) support for FAT32 + exFAT
+- SPI transport with bus guard and SDMMC stub
+- CD pin debounce + no-CD probe/backoff logic
+- Bounded async request queue and result handling
+- CLI example (`01_spi_cli_control`) and compile-only example
+- Host tests for debounce/backoff logic
 
-[Unreleased]: https://github.com/YOUR_USERNAME/esp32-platformio-library-template/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/YOUR_USERNAME/esp32-platformio-library-template/releases/tag/v0.1.0
+[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/YOUR_USERNAME/AsyncSD/releases/tag/v0.1.0

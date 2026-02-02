@@ -43,7 +43,7 @@ def main():
     project_root = script_dir.parent
     
     library_json = project_root / "library.json"
-    version_h = project_root / "include" / "YourLibrary" / "Version.h"
+    version_h = project_root / "include" / "AsyncSD" / "Version.h"
     
     # Read version from library.json
     with open(library_json, "r", encoding="utf-8") as f:
@@ -80,7 +80,7 @@ def main():
 
 #include <stdint.h>
 
-namespace YourLibrary {{
+namespace AsyncSD {{
 
 /// @brief Major version (breaking changes).
 static constexpr uint16_t VERSION_MAJOR = {major};
@@ -119,7 +119,7 @@ static constexpr const char* GIT_STATUS = "{git_status}";
 /// @note Format: "version (commit, date time)"
 static constexpr const char* VERSION_FULL = "{version} ({git_commit}, {build_timestamp})";
 
-}}  // namespace YourLibrary
+}}  // namespace AsyncSD
 '''
     
     # Write Version.h
