@@ -6,9 +6,6 @@ using AsyncSD::internal::Backoff;
 using AsyncSD::internal::Debounce;
 using AsyncSD::internal::FailureHysteresis;
 
-void setUp() {}
-void tearDown() {}
-
 void test_debounce() {
   Debounce d;
   d.debounceMs = 50;
@@ -56,14 +53,4 @@ void test_failure_hysteresis() {
   TEST_ASSERT_TRUE(f.recordFailure());
   f.recordSuccess();
   TEST_ASSERT_FALSE(f.recordFailure());
-}
-
-int main(int argc, char** argv) {
-  (void)argc;
-  (void)argv;
-  UNITY_BEGIN();
-  RUN_TEST(test_debounce);
-  RUN_TEST(test_backoff);
-  RUN_TEST(test_failure_hysteresis);
-  return UNITY_END();
 }

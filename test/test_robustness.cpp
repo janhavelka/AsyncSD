@@ -8,9 +8,6 @@ using AsyncSD::internal::incrementDroppedResults;
 using AsyncSD::internal::shouldAbortShutdown;
 using AsyncSD::internal::shouldStall;
 
-void setUp() {}
-void tearDown() {}
-
 void test_stall_detector() {
   TEST_ASSERT_FALSE(shouldStall(1000, 0, 5000, true));
   TEST_ASSERT_FALSE(shouldStall(1000, 900, 0, true));
@@ -64,15 +61,3 @@ void test_dropped_results_counter() {
   TEST_ASSERT_EQUAL_UINT32(2, incrementDroppedResults(counter));
   TEST_ASSERT_EQUAL_UINT32(2, counter.load());
 }
-
-int main(int argc, char** argv) {
-  (void)argc;
-  (void)argv;
-  UNITY_BEGIN();
-  RUN_TEST(test_stall_detector);
-  RUN_TEST(test_shutdown_policy);
-  RUN_TEST(test_copy_write_pool);
-  RUN_TEST(test_dropped_results_counter);
-  return UNITY_END();
-}
-
