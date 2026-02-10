@@ -11,10 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet
 
 ### Changed
-- Nothing yet
+- Hardened `begin()` validation/sanitization for path bounds, worker stack sizing, and backoff thresholds
+- Worker task entry now runs from internal state/config only (no `SdCardManager*` dereference from task loop)
 
 ### Fixed
-- Nothing yet
+- Fixed potential use-after-free when the manager object is destroyed while the worker task is still running
+- Fixed stale runtime state across repeated `begin()`/`end()` cycles (queue indices, CD flags, pending automount/unmount, and task state)
+- Fixed stale `lastErrorInfo.path` pointer lifetime across teardown by clearing path before buffer free
+- Fixed unbounded path normalization scans by using bounded string handling
+- Fixed request counter/result counter underflow guards to prevent queue corruption on unexpected state drift
+- Fixed unsupported-filesystem mount cleanup to respect SPI bus locking during transport shutdown
+- Fixed `requestWriteCopy()` pre-begin/callback-context validation paths to return deterministic errors
+- Fixed `requestRead()` to reject `APPEND_OFFSET` as invalid input
 
 ## [1.0.0] - 2026-02-02
 

@@ -217,7 +217,7 @@ class SdCardManager {
   /**
    * @brief Enqueue a read request.
    * @param handle File handle.
-   * @param offset Byte offset to seek before reading.
+   * @param offset Byte offset to seek before reading (APPEND_OFFSET is invalid).
    * @param dst Destination buffer (must remain valid until result).
    * @param len Number of bytes to read.
    * @param cb Optional callback invoked on completion (worker context).

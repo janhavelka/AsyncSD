@@ -139,11 +139,12 @@ struct Internal {
   FsInfo fsInfo{};
   CardInfo cardInfo{};
   HealthState health{};
+  SdCardConfig runtimeConfig{};
 
   bool initialized = false;
   bool mounted = false;
-  bool workerRunning = false;
-  bool stopWorker = false;
+  std::atomic<bool> workerRunning{false};
+  std::atomic<bool> stopWorker{false};
   bool spiInitialized = false;
   bool shutdownFailed = false;
   std::atomic<bool> inCallback{false};
@@ -209,6 +210,8 @@ static bool allocateCopySlot(Internal* st, uint32_t length, const void* data,
                              uint8_t* outSlot, void** outBuffer);
 static void releaseCopySlot(Internal* st, const Request& req);
 static ErrorCode performUnmount(Internal* st, const SdCardConfig& cfg);
+static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budgetUs);
+static void workerTaskEntry(void* arg);
 
 static inline bool deadlineReached(uint32_t nowMs, uint32_t deadlineMs) {
   return static_cast<int32_t>(nowMs - deadlineMs) >= 0;
@@ -293,6 +296,19 @@ static CardType mapCardType(uint8_t type) {
   }
 }
 
+static bool boundedLength(const char* str, size_t maxChars, size_t* outLen) {
+  if (!str || !outLen || maxChars == 0) {
+    return false;
+  }
+  for (size_t i = 0; i < maxChars; ++i) {
+    if (str[i] == '\0') {
+      *outLen = i;
+      return true;
+    }
+  }
+  return false;
+}
+
 static void copyPath(char* dst, uint16_t dstLen, const char* src) {
   if (!dst || dstLen == 0) {
     return;
@@ -314,25 +330,42 @@ static bool normalizePath(const SdCardConfig& cfg, const char* in, char* out, ui
     return false;
   }
 
+  const size_t maxChars = static_cast<size_t>(outLen);
   const char* src = in;
+  size_t srcLen = 0;
+  if (!boundedLength(src, maxChars, &srcLen)) {
+    return false;
+  }
+
   const char* mp = cfg.mountPoint;
   if (mp && mp[0] != '\0') {
-    const size_t mpLen = strlen(mp);
-    if (mpLen > 0 && strncmp(src, mp, mpLen) == 0) {
+    size_t mpLen = 0;
+    if (!boundedLength(mp, maxChars, &mpLen)) {
+      return false;
+    }
+    if (mpLen > 0 && srcLen >= mpLen &&
+        memcmp(src, mp, mpLen) == 0) {
       if (src[mpLen] == '\0' || src[mpLen] == '/') {
         src += mpLen;
         if (*src == '/') {
           src++;
+        }
+        if (!boundedLength(src, maxChars, &srcLen)) {
+          return false;
         }
       }
     }
   }
 
   if (*src == '\0') {
-    src = "/";
+    out[0] = '/';
+    out[1] = '\0';
+    return true;
   }
 
-  const size_t srcLen = strlen(src);
+  if (!boundedLength(src, maxChars, &srcLen)) {
+    return false;
+  }
   if (srcLen >= outLen) {
     return false;
   }
@@ -527,12 +560,32 @@ static void cdIsr(void* arg) {
   }
 }
 
-SdCardManager::SdCardManager() { _internal = new Internal(); }
+static void workerTaskEntry(void* arg) {
+  Internal* st = static_cast<Internal*>(arg);
+  if (!st) {
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  st->workerRunning.store(true, std::memory_order_relaxed);
+  while (!st->stopWorker.load(std::memory_order_relaxed)) {
+    workerStepCore(st, st->runtimeConfig, st->runtimeConfig.workerBudgetUs);
+    if (st->runtimeConfig.workerIdleMs > 0) {
+      vTaskDelay(pdMS_TO_TICKS(st->runtimeConfig.workerIdleMs));
+    } else {
+      taskYIELD();
+    }
+  }
+  st->workerRunning.store(false, std::memory_order_relaxed);
+  vTaskDelete(nullptr);
+}
+
+SdCardManager::SdCardManager() { _internal = new (std::nothrow) Internal(); }
 
 SdCardManager::~SdCardManager() {
   end();
   if (_internal) {
-    if (_internal->workerRunning) {
+    if (_internal->workerRunning.load(std::memory_order_relaxed)) {
       // Safe leak to avoid use-after-free if worker is still running.
       _internal = nullptr;
       return;
@@ -551,17 +604,41 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
     return false;
   }
 
+  SdCardConfig validated = config;
+  if (validated.probeFailThreshold == 0) {
+    validated.probeFailThreshold = 1;
+  }
+  if (validated.probeBackoffMinMs == 0) {
+    validated.probeBackoffMinMs = 1;
+  }
+  if (validated.probeBackoffMaxMs < validated.probeBackoffMinMs) {
+    validated.probeBackoffMaxMs = validated.probeBackoffMinMs;
+  }
+
   // Basic validation
-  if (config.requestQueueDepth == 0 || config.resultQueueDepth == 0 ||
-      config.maxOpenFiles == 0 || config.maxPathLength < 2 ||
-      config.ioChunkBytes == 0) {
+  if (validated.requestQueueDepth == 0 || validated.resultQueueDepth == 0 ||
+      validated.maxOpenFiles == 0 || validated.maxPathLength < 2 ||
+      validated.ioChunkBytes == 0 ||
+      (validated.transport == TransportType::Spi && validated.spiFrequencyHz == 0) ||
+      (validated.useWorkerTask &&
+       validated.workerStackBytes < sizeof(StackType_t))) {
     setLastError(_internal, ErrorCode::InvalidArgument, Operation::Begin, 0, nullptr, 0, 0);
     setStatus(_internal, SdStatus::Fault);
     return false;
   }
 
-  if (config.transport == TransportType::Spi) {
-    if (!config.spi || config.pinCs < 0) {
+  size_t mountPointLen = 0;
+  if (validated.mountPoint &&
+      !boundedLength(validated.mountPoint, static_cast<size_t>(validated.maxPathLength),
+                     &mountPointLen)) {
+    setLastError(_internal, ErrorCode::InvalidArgument, Operation::Begin, 0, nullptr, 0, 0);
+    setStatus(_internal, SdStatus::Fault);
+    return false;
+  }
+  (void)mountPointLen;
+
+  if (validated.transport == TransportType::Spi) {
+    if (!validated.spi || validated.pinCs < 0) {
       setLastError(_internal, ErrorCode::InvalidArgument, Operation::Begin, 0, nullptr, 0, 0);
       setStatus(_internal, SdStatus::Fault);
       return false;
@@ -569,14 +646,63 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   }
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S3)
-  if (config.transport == TransportType::Sdmmc) {
+  if (validated.transport == TransportType::Sdmmc) {
     setLastError(_internal, ErrorCode::Unsupported, Operation::Begin, 0, nullptr, 0, 0);
     setStatus(_internal, SdStatus::Fault);
     return false;
   }
 #endif
 
-  _config = config;
+  _config = validated;
+  _internal->runtimeConfig = _config;
+
+  // Reset runtime state so repeated begin/end cycles stay deterministic.
+  _internal->status = SdStatus::Disabled;
+  _internal->lastError = ErrorCode::Ok;
+  _internal->lastErrorInfo = ErrorInfo{};
+  _internal->fsInfo = FsInfo{};
+  _internal->cardInfo = CardInfo{};
+  _internal->mounted = false;
+  _internal->workerRunning.store(false, std::memory_order_relaxed);
+  _internal->stopWorker.store(false, std::memory_order_relaxed);
+  _internal->spiInitialized = false;
+  _internal->shutdownFailed = false;
+  _internal->inCallback.store(false, std::memory_order_relaxed);
+  _internal->guard = nullptr;
+  _internal->guardOwned = false;
+  _internal->transport = nullptr;
+  _internal->transportOwned = false;
+  _internal->sd = nullptr;
+  _internal->files = nullptr;
+  _internal->reqQueue = nullptr;
+  _internal->resQueue = nullptr;
+  _internal->pathPool = nullptr;
+  _internal->pathLen = 0;
+  _internal->errorPath = nullptr;
+  _internal->errorPathLen = 0;
+  _internal->copySlots = nullptr;
+  _internal->copySlotPool = nullptr;
+  _internal->copySlotCount = 0;
+  _internal->copySlotSize = 0;
+  _internal->maxOpenFiles = 0;
+  _internal->reqHead = 0;
+  _internal->reqTail = 0;
+  _internal->reqCount = 0;
+  _internal->reqDepth = 0;
+  _internal->resHead = 0;
+  _internal->resTail = 0;
+  _internal->resCount = 0;
+  _internal->resDepth = 0;
+  _internal->nextRequestId = 1;
+  _internal->cdEnabled = false;
+  _internal->cdInterruptEnabled = false;
+  _internal->cdInterruptFlag = false;
+  _internal->cardPresent = false;
+  _internal->lastCdPollMs = 0;
+  _internal->lastProbeMs = 0;
+  _internal->pendingAutoMount = false;
+  _internal->pendingAutoUnmount = false;
+  _internal->task = nullptr;
 
   // Allocate resources
   _internal->sd = new (std::nothrow) SdFs();
@@ -671,6 +797,7 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
     _internal->cdDebounce.debounceMs = _config.cdDebounceMs;
     _internal->cdDebounce.reset(present, millis());
     _internal->cardPresent = present;
+    _internal->pendingAutoMount = _config.autoMount && _internal->cardPresent;
     if (_config.cdUseInterrupt) {
       _internal->cdInterruptEnabled = true;
       attachInterruptArg(static_cast<uint8_t>(_config.cdPin), cdIsr, _internal, CHANGE);
@@ -702,71 +829,31 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   _internal->health.stallActive.store(false, std::memory_order_relaxed);
 
   if (_config.useWorkerTask) {
-    _internal->stopWorker = false;
-    _internal->workerRunning = false;
+    _internal->stopWorker.store(false, std::memory_order_relaxed);
+    _internal->workerRunning.store(false, std::memory_order_relaxed);
+    _internal->task = nullptr;
+    const uint32_t stackDepth =
+        static_cast<uint32_t>(_config.workerStackBytes / sizeof(StackType_t));
     const BaseType_t ok =
         (_config.workerCore >= 0)
             ? xTaskCreatePinnedToCore(
-                  [](void* arg) {
-                    SdCardManager* self = static_cast<SdCardManager*>(arg);
-                    if (!self) {
-                      vTaskDelete(nullptr);
-                      return;
-                    }
-                    Internal* st = self->_internal;
-                    if (!st) {
-                      vTaskDelete(nullptr);
-                      return;
-                    }
-                    st->workerRunning = true;
-                    while (!st->stopWorker) {
-                      self->workerStep(self->_config.workerBudgetUs);
-                      if (self->_config.workerIdleMs > 0) {
-                        vTaskDelay(pdMS_TO_TICKS(self->_config.workerIdleMs));
-                      } else {
-                        taskYIELD();
-                      }
-                    }
-                    st->workerRunning = false;
-                    vTaskDelete(nullptr);
-                  },
+                  workerTaskEntry,
                   "AsyncSD",
-                  _config.workerStackBytes / sizeof(StackType_t),
-                  this,
+                  stackDepth,
+                  _internal,
                   _config.workerPriority,
                   &_internal->task,
                   _config.workerCore)
             : xTaskCreate(
-                  [](void* arg) {
-                    SdCardManager* self = static_cast<SdCardManager*>(arg);
-                    if (!self) {
-                      vTaskDelete(nullptr);
-                      return;
-                    }
-                    Internal* st = self->_internal;
-                    if (!st) {
-                      vTaskDelete(nullptr);
-                      return;
-                    }
-                    st->workerRunning = true;
-                    while (!st->stopWorker) {
-                      self->workerStep(self->_config.workerBudgetUs);
-                      if (self->_config.workerIdleMs > 0) {
-                        vTaskDelay(pdMS_TO_TICKS(self->_config.workerIdleMs));
-                      } else {
-                        taskYIELD();
-                      }
-                    }
-                    st->workerRunning = false;
-                    vTaskDelete(nullptr);
-                  },
+                  workerTaskEntry,
                   "AsyncSD",
-                  _config.workerStackBytes / sizeof(StackType_t),
-                  this,
+                  stackDepth,
+                  _internal,
                   _config.workerPriority,
                   &_internal->task);
 
     if (ok != pdPASS) {
+      end();
       setLastError(_internal, ErrorCode::InternalError, Operation::Begin, 0, nullptr, 0, 0);
       setStatus(_internal, SdStatus::Fault);
       return false;
@@ -781,7 +868,8 @@ void SdCardManager::end() {
     return;
   }
 
-  if (_internal->shutdownFailed && _internal->workerRunning) {
+  if (_internal->shutdownFailed &&
+      _internal->workerRunning.load(std::memory_order_relaxed)) {
     return;
   }
 
@@ -791,7 +879,7 @@ void SdCardManager::end() {
   }
 
   if (_internal->task) {
-    _internal->stopWorker = true;
+    _internal->stopWorker.store(true, std::memory_order_relaxed);
     if (xTaskGetCurrentTaskHandle() == _internal->task) {
       // Called from worker context; signal stop and avoid teardown.
       setLastError(_internal, ErrorCode::InvalidContext, Operation::Shutdown, 0, nullptr, 0, 0);
@@ -799,12 +887,14 @@ void SdCardManager::end() {
       return;
     }
     const uint32_t startMs = millis();
-    while (_internal->workerRunning &&
+    while (_internal->workerRunning.load(std::memory_order_relaxed) &&
            !deadlineReached(millis(), startMs + _config.shutdownTimeoutMs)) {
       vTaskDelay(pdMS_TO_TICKS(1));
     }
-    const bool timedOut = _internal->workerRunning;
-    if (internal::shouldAbortShutdown(_internal->workerRunning, timedOut)) {
+    const bool workerStillRunning =
+        _internal->workerRunning.load(std::memory_order_relaxed);
+    const bool timedOut = workerStillRunning;
+    if (internal::shouldAbortShutdown(workerStillRunning, timedOut)) {
       setLastError(_internal, ErrorCode::Timeout, Operation::Shutdown, 0, nullptr, 0, 0);
       setStatus(_internal, SdStatus::Fault);
       _internal->health.stallActive.store(true, std::memory_order_relaxed);
@@ -840,6 +930,9 @@ void SdCardManager::end() {
   delete[] _internal->reqQueue;
   delete[] _internal->resQueue;
   delete[] _internal->pathPool;
+  portENTER_CRITICAL(&_internal->stateMux);
+  _internal->lastErrorInfo.path = nullptr;
+  portEXIT_CRITICAL(&_internal->stateMux);
   delete[] _internal->errorPath;
   delete[] _internal->copySlots;
   delete[] _internal->copySlotPool;
@@ -855,8 +948,39 @@ void SdCardManager::end() {
   _internal->sd = nullptr;
 
   _internal->initialized = false;
+  _internal->mounted = false;
+  _internal->workerRunning.store(false, std::memory_order_relaxed);
+  _internal->stopWorker.store(false, std::memory_order_relaxed);
+  _internal->spiInitialized = false;
   _internal->shutdownFailed = false;
+  _internal->inCallback.store(false, std::memory_order_relaxed);
+  _internal->maxOpenFiles = 0;
+  _internal->reqHead = 0;
+  _internal->reqTail = 0;
+  _internal->reqCount = 0;
+  _internal->reqDepth = 0;
+  _internal->resHead = 0;
+  _internal->resTail = 0;
+  _internal->resCount = 0;
+  _internal->resDepth = 0;
+  _internal->pathLen = 0;
+  _internal->errorPathLen = 0;
+  _internal->copySlotCount = 0;
+  _internal->copySlotSize = 0;
+  _internal->nextRequestId = 1;
+  _internal->cdEnabled = false;
+  _internal->cdInterruptEnabled = false;
+  _internal->cdInterruptFlag = false;
+  _internal->cardPresent = false;
+  _internal->lastCdPollMs = 0;
+  _internal->lastProbeMs = 0;
+  _internal->pendingAutoMount = false;
+  _internal->pendingAutoUnmount = false;
+  _internal->task = nullptr;
+  _internal->runtimeConfig = SdCardConfig{};
   setStatus(_internal, SdStatus::Disabled);
+  setFsInfo(_internal, FsInfo{});
+  setCardInfo(_internal, CardInfo{});
   _internal->health.stallActive.store(false, std::memory_order_relaxed);
   _internal->health.queueDepthRequests.store(0, std::memory_order_relaxed);
   _internal->health.queueDepthResults.store(0, std::memory_order_relaxed);
@@ -867,7 +991,8 @@ void SdCardManager::poll() {
   if (!_internal) {
     return;
   }
-  if (_config.useWorkerTask && _internal->workerRunning) {
+  if (_config.useWorkerTask && _internal->task &&
+      xTaskGetCurrentTaskHandle() != _internal->task) {
     return;
   }
   workerStep(_config.workerBudgetUs);
@@ -1106,11 +1231,13 @@ RequestId SdCardManager::requestClose(FileHandle handle, ResultCallback cb, void
 
 RequestId SdCardManager::requestRead(FileHandle handle, uint64_t offset, void* dst,
                                      size_t len, ResultCallback cb, void* user) {
+  const uint32_t requestedBytes =
+      (len > UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(len);
   if (!_internal || handle == INVALID_FILE_HANDLE || !dst || len == 0 ||
-      len > UINT32_MAX) {
+      len > UINT32_MAX || offset == APPEND_OFFSET) {
     if (_internal) {
       setLastError(_internal, ErrorCode::InvalidArgument, Operation::Read, 0, nullptr,
-                   static_cast<uint32_t>(len), 0);
+                   requestedBytes, 0);
     }
     return INVALID_REQUEST_ID;
   }
@@ -1123,11 +1250,13 @@ RequestId SdCardManager::requestRead(FileHandle handle, uint64_t offset, void* d
 
 RequestId SdCardManager::requestWrite(FileHandle handle, uint64_t offset, const void* src,
                                       size_t len, ResultCallback cb, void* user) {
+  const uint32_t requestedBytes =
+      (len > UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(len);
   if (!_internal || handle == INVALID_FILE_HANDLE || !src || len == 0 ||
       len > UINT32_MAX) {
     if (_internal) {
       setLastError(_internal, ErrorCode::InvalidArgument, Operation::Write, 0, nullptr,
-                   static_cast<uint32_t>(len), 0);
+                   requestedBytes, 0);
     }
     return INVALID_REQUEST_ID;
   }
@@ -1140,23 +1269,35 @@ RequestId SdCardManager::requestWrite(FileHandle handle, uint64_t offset, const 
 
 RequestId SdCardManager::requestWriteCopy(FileHandle handle, uint64_t offset, const void* src,
                                           size_t len, ResultCallback cb, void* user) {
-  if (!_internal || handle == INVALID_FILE_HANDLE || !src || len == 0 ||
-      len > UINT32_MAX) {
-    if (_internal) {
-      setLastError(_internal, ErrorCode::InvalidArgument, Operation::Write, 0, nullptr,
-                   static_cast<uint32_t>(len), 0);
-    }
+  if (!_internal) {
+    return INVALID_REQUEST_ID;
+  }
+  const uint32_t requestedBytes =
+      (len > UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(len);
+  if (!_internal->initialized) {
+    setLastError(_internal, ErrorCode::NotInitialized, Operation::Enqueue, 0, nullptr,
+                 requestedBytes, 0);
+    return INVALID_REQUEST_ID;
+  }
+  if (_internal->inCallback.load(std::memory_order_relaxed)) {
+    setLastError(_internal, ErrorCode::InvalidContext, Operation::Enqueue, 0, nullptr,
+                 requestedBytes, 0);
+    return INVALID_REQUEST_ID;
+  }
+  if (handle == INVALID_FILE_HANDLE || !src || len == 0 || len > UINT32_MAX) {
+    setLastError(_internal, ErrorCode::InvalidArgument, Operation::Write, 0, nullptr,
+                 requestedBytes, 0);
     return INVALID_REQUEST_ID;
   }
   if (_config.copyWriteSlots == 0 || _config.maxCopyWriteBytes == 0 ||
       len > _config.maxCopyWriteBytes) {
     setLastError(_internal, ErrorCode::InvalidArgument, Operation::Write, 0, nullptr,
-                 static_cast<uint32_t>(len), 0);
+                 requestedBytes, 0);
     return INVALID_REQUEST_ID;
   }
   if (_internal->health.stallActive.load(std::memory_order_relaxed)) {
     setLastError(_internal, ErrorCode::Fault, Operation::Enqueue, 0, nullptr,
-                 static_cast<uint32_t>(len), 0);
+                 requestedBytes, 0);
     return INVALID_REQUEST_ID;
   }
 
@@ -1164,7 +1305,7 @@ RequestId SdCardManager::requestWriteCopy(FileHandle handle, uint64_t offset, co
   void* buffer = nullptr;
   if (!allocateCopySlot(_internal, static_cast<uint32_t>(len), src, &slot, &buffer)) {
     setLastError(_internal, ErrorCode::Busy, Operation::Enqueue, 0, nullptr,
-                 static_cast<uint32_t>(len), 0);
+                 requestedBytes, 0);
     return INVALID_REQUEST_ID;
   }
 
@@ -1247,7 +1388,9 @@ bool SdCardManager::getResult(RequestId id, RequestResult* out) {
     if (slot.inUse && slot.result.id == id) {
       *out = slot.result;
       slot.inUse = false;
-      _internal->resCount--;
+      if (_internal->resCount > 0) {
+        _internal->resCount--;
+      }
       const uint8_t depth = _internal->resCount;
       portEXIT_CRITICAL(&_internal->queueMux);
       _internal->health.queueDepthResults.store(depth, std::memory_order_relaxed);
@@ -1275,7 +1418,9 @@ bool SdCardManager::popResult(RequestResult* out) {
     if (slot.inUse) {
       *out = slot.result;
       slot.inUse = false;
-      _internal->resCount--;
+      if (_internal->resCount > 0) {
+        _internal->resCount--;
+      }
       const uint8_t depth = _internal->resCount;
       _internal->resHead = static_cast<uint8_t>((idx + 1) % _internal->resDepth);
       portEXIT_CRITICAL(&_internal->queueMux);
@@ -1457,16 +1602,28 @@ static ErrorCode performMount(Internal* st, const SdCardConfig& cfg) {
   setStatus(st, SdStatus::Mounting);
 
   if (!st->transport) {
+    st->mounted = false;
+    setFsInfo(st, FsInfo{});
+    setCardInfo(st, CardInfo{});
     return ErrorCode::InternalError;
   }
   const ErrorCode initCode = st->transport->begin(st, cfg);
   if (initCode != ErrorCode::Ok) {
+    st->mounted = false;
+    setFsInfo(st, FsInfo{});
+    setCardInfo(st, CardInfo{});
     return initCode;
   }
 
   FsInfo info = buildFsInfo(st, false);
   if (info.fsType == FsType::Unknown) {
-    st->transport->end(st);
+    if (lockBus(st, cfg)) {
+      st->transport->end(st);
+      unlockBus(st);
+    }
+    st->mounted = false;
+    setFsInfo(st, FsInfo{});
+    setCardInfo(st, CardInfo{});
     return ErrorCode::FsUnsupported;
   }
 
@@ -1584,148 +1741,145 @@ static void updateCdPresence(Internal* st, const SdCardConfig& cfg, uint32_t now
   }
 }
 
-void SdCardManager::workerStep(uint32_t budgetUs) {
-  if (!_internal || !_internal->initialized) {
-    return;
-  }
-
-  if (_config.useWorkerTask && _internal->workerRunning &&
-      xTaskGetCurrentTaskHandle() != _internal->task) {
+static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budgetUs) {
+  if (!st || !st->initialized) {
     return;
   }
 
   const uint32_t startUs = micros();
   const uint32_t nowMs = millis();
 
-  if (_internal->health.stallActive.load(std::memory_order_relaxed)) {
+  if (st->health.stallActive.load(std::memory_order_relaxed)) {
     return;
   }
 
-  updateCdPresence(_internal, _config, nowMs);
+  updateCdPresence(st, cfg, nowMs);
 
   // Auto-mount/unmount decisions
-  if (!_internal->cdEnabled) {
-    if (!_internal->mounted && _config.autoMount && _internal->backoff.shouldFire(nowMs)) {
-      _internal->pendingAutoMount = true;
+  if (!st->cdEnabled) {
+    if (!st->mounted && cfg.autoMount && st->backoff.shouldFire(nowMs)) {
+      st->pendingAutoMount = true;
     }
 
-    if (_internal->mounted &&
-        deadlineReached(nowMs, _internal->lastProbeMs + _config.probeIntervalMs)) {
-      const bool ok = probeCard(_internal, _config);
-      _internal->lastProbeMs = nowMs;
-      recordProgress(_internal, nowMs);
+    if (st->mounted &&
+        deadlineReached(nowMs, st->lastProbeMs + cfg.probeIntervalMs)) {
+      const bool ok = probeCard(st, cfg);
+      st->lastProbeMs = nowMs;
+      recordProgress(st, nowMs);
       if (ok) {
-        _internal->probeFailures.recordSuccess();
-      } else if (_internal->probeFailures.recordFailure()) {
-        _internal->pendingAutoUnmount = true;
-        _internal->probeFailures.reset();
+        st->probeFailures.recordSuccess();
+      } else if (st->probeFailures.recordFailure()) {
+        st->pendingAutoUnmount = true;
+        st->probeFailures.reset();
       }
     }
   }
 
   uint8_t pendingRequests = 0;
-  portENTER_CRITICAL(&_internal->queueMux);
-  pendingRequests = _internal->reqCount;
-  portEXIT_CRITICAL(&_internal->queueMux);
+  portENTER_CRITICAL(&st->queueMux);
+  pendingRequests = st->reqCount;
+  portEXIT_CRITICAL(&st->queueMux);
 
-  const bool hasPendingWork = (pendingRequests > 0) || _internal->pendingAutoMount ||
-                              _internal->pendingAutoUnmount;
+  const bool hasPendingWork = (pendingRequests > 0) || st->pendingAutoMount ||
+                              st->pendingAutoUnmount;
   if (!hasPendingWork) {
-    recordProgress(_internal, nowMs);
+    recordProgress(st, nowMs);
   }
 
-  if (_config.workerStallMs > 0 && hasPendingWork) {
+  if (cfg.workerStallMs > 0 && hasPendingWork) {
     const uint32_t lastProgress =
-        _internal->health.lastProgressMs.load(std::memory_order_relaxed);
-    if (internal::shouldStall(nowMs, lastProgress, _config.workerStallMs, hasPendingWork)) {
+        st->health.lastProgressMs.load(std::memory_order_relaxed);
+    if (internal::shouldStall(nowMs, lastProgress, cfg.workerStallMs, hasPendingWork)) {
       bool expected = false;
-      if (_internal->health.stallActive.compare_exchange_strong(
+      if (st->health.stallActive.compare_exchange_strong(
               expected, true, std::memory_order_relaxed)) {
-        _internal->health.stallEvents.fetch_add(1, std::memory_order_relaxed);
-        setLastError(_internal, ErrorCode::Fault, Operation::None, 0, nullptr, 0, 0);
-        setStatus(_internal, SdStatus::Fault);
-        recordFailure(_internal);
-        _internal->pendingAutoMount = false;
-        _internal->pendingAutoUnmount = false;
-        failAllPending(_internal, _config, ErrorCode::Fault);
-        (void)performUnmount(_internal, _config);
+        st->health.stallEvents.fetch_add(1, std::memory_order_relaxed);
+        setLastError(st, ErrorCode::Fault, Operation::None, 0, nullptr, 0, 0);
+        setStatus(st, SdStatus::Fault);
+        recordFailure(st);
+        st->pendingAutoMount = false;
+        st->pendingAutoUnmount = false;
+        failAllPending(st, cfg, ErrorCode::Fault);
+        (void)performUnmount(st, cfg);
       }
       return;
     }
   }
 
-  if (_internal->pendingAutoUnmount) {
-    _internal->pendingAutoUnmount = false;
-    ErrorCode unmountCode = performUnmount(_internal, _config);
+  if (st->pendingAutoUnmount) {
+    st->pendingAutoUnmount = false;
+    ErrorCode unmountCode = performUnmount(st, cfg);
     if (unmountCode != ErrorCode::Ok) {
-      setLastError(_internal, unmountCode, Operation::Unmount, 0, nullptr, 0, 0);
-      setStatus(_internal, SdStatus::Error);
-      recordFailure(_internal);
-      recordProgress(_internal, nowMs);
-      _internal->pendingAutoUnmount = true;
+      setLastError(st, unmountCode, Operation::Unmount, 0, nullptr, 0, 0);
+      setStatus(st, SdStatus::Error);
+      recordFailure(st);
+      recordProgress(st, nowMs);
+      st->pendingAutoUnmount = true;
       return;
     }
-    setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
-                                                                        : SdStatus::NoCard)
-                                              : SdStatus::NoCard);
-    recordSuccess(_internal);
-    recordProgress(_internal, nowMs);
-    failAllPending(_internal, _config, ErrorCode::NotReady);
+    setStatus(st, st->cdEnabled ? (st->cardPresent ? SdStatus::CardInserted
+                                                    : SdStatus::NoCard)
+                                : SdStatus::NoCard);
+    recordSuccess(st);
+    recordProgress(st, nowMs);
+    failAllPending(st, cfg, ErrorCode::NotReady);
     if (budgetExceeded(startUs, budgetUs)) {
       return;
     }
   }
 
-  if (_internal->pendingAutoMount) {
-    _internal->pendingAutoMount = false;
-    const ErrorCode st = performMount(_internal, _config);
-    if (st == ErrorCode::Ok) {
-      setStatus(_internal, SdStatus::Ready);
-      _internal->backoff.onSuccess(nowMs, _config.probeIntervalMs);
-      recordSuccess(_internal);
+  if (st->pendingAutoMount) {
+    st->pendingAutoMount = false;
+    const ErrorCode mountCode = performMount(st, cfg);
+    if (mountCode == ErrorCode::Ok) {
+      setStatus(st, SdStatus::Ready);
+      st->backoff.onSuccess(nowMs, cfg.probeIntervalMs);
+      recordSuccess(st);
     } else {
-      setLastError(_internal, st, Operation::Mount, 0, nullptr, 0, 0);
-      setStatus(_internal, SdStatus::Error);
-      _internal->backoff.onFailure(nowMs);
-      recordFailure(_internal);
+      setLastError(st, mountCode, Operation::Mount, 0, nullptr, 0, 0);
+      setStatus(st, SdStatus::Error);
+      st->backoff.onFailure(nowMs);
+      recordFailure(st);
     }
-    recordProgress(_internal, nowMs);
+    recordProgress(st, nowMs);
     if (budgetExceeded(startUs, budgetUs)) {
       return;
     }
   }
 
   // Process request queue head
-  portENTER_CRITICAL(&_internal->queueMux);
-  if (_internal->reqCount == 0) {
-    portEXIT_CRITICAL(&_internal->queueMux);
+  portENTER_CRITICAL(&st->queueMux);
+  if (st->reqCount == 0) {
+    portEXIT_CRITICAL(&st->queueMux);
     return;
   }
 
-  RequestSlot& slot = _internal->reqQueue[_internal->reqHead];
+  RequestSlot& slot = st->reqQueue[st->reqHead];
   if (!slot.inUse) {
-    portEXIT_CRITICAL(&_internal->queueMux);
+    portEXIT_CRITICAL(&st->queueMux);
     return;
   }
   Request& req = slot.req;
-  portEXIT_CRITICAL(&_internal->queueMux);
+  portEXIT_CRITICAL(&st->queueMux);
 
   const uint32_t nowReqMs = millis();
   if (deadlineReached(nowReqMs, req.deadlineMs)) {
-    releaseCopySlot(_internal, req);
-    enqueueResult(_internal, _config, req, ErrorCode::Timeout, 0, req.processed,
+    releaseCopySlot(st, req);
+    enqueueResult(st, cfg, req, ErrorCode::Timeout, 0, req.processed,
                   INVALID_FILE_HANDLE, FileStat{});
-    setLastError(_internal, ErrorCode::Timeout, opFromRequest(req.type), 0, req.path,
+    setLastError(st, ErrorCode::Timeout, opFromRequest(req.type), 0, req.path,
                  req.length, req.processed);
-    portENTER_CRITICAL(&_internal->queueMux);
+    portENTER_CRITICAL(&st->queueMux);
     slot.inUse = false;
-    _internal->reqHead = static_cast<uint8_t>((_internal->reqHead + 1) % _internal->reqDepth);
-    _internal->reqCount--;
-    const uint8_t depth = _internal->reqCount;
-    portEXIT_CRITICAL(&_internal->queueMux);
-    _internal->health.queueDepthRequests.store(depth, std::memory_order_relaxed);
-    recordFailure(_internal);
-    recordProgress(_internal, nowReqMs);
+    st->reqHead = static_cast<uint8_t>((st->reqHead + 1) % st->reqDepth);
+    if (st->reqCount > 0) {
+      st->reqCount--;
+    }
+    const uint8_t depth = st->reqCount;
+    portEXIT_CRITICAL(&st->queueMux);
+    st->health.queueDepthRequests.store(depth, std::memory_order_relaxed);
+    recordFailure(st);
+    recordProgress(st, nowReqMs);
     return;
   }
 
@@ -1736,46 +1890,46 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
   FileStat stat{};
 
   const bool isIoRequest = (req.type != RequestType::Mount && req.type != RequestType::Unmount);
-  if (isIoRequest && _internal->mounted) {
-    setStatus(_internal, SdStatus::Busy);
+  if (isIoRequest && st->mounted) {
+    setStatus(st, SdStatus::Busy);
   }
 
   switch (req.type) {
     case RequestType::Mount: {
-      code = performMount(_internal, _config);
+      code = performMount(st, cfg);
       if (code == ErrorCode::Ok) {
-        setStatus(_internal, SdStatus::Ready);
+        setStatus(st, SdStatus::Ready);
       } else {
-        setStatus(_internal, SdStatus::Error);
+        setStatus(st, SdStatus::Error);
       }
       break;
     }
     case RequestType::Unmount: {
-      code = performUnmount(_internal, _config);
+      code = performUnmount(st, cfg);
       if (code == ErrorCode::Ok) {
-        setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
-                                                                            : SdStatus::NoCard)
-                                                  : SdStatus::NoCard);
+        setStatus(st, st->cdEnabled ? (st->cardPresent ? SdStatus::CardInserted
+                                                        : SdStatus::NoCard)
+                                    : SdStatus::NoCard);
       } else {
-        setStatus(_internal, SdStatus::Error);
+        setStatus(st, SdStatus::Error);
       }
       break;
     }
     case RequestType::Info: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
       CardInfo cardInfo{};
       FsInfo fsInfo{};
-      SdCard* card = _internal->sd ? _internal->sd->card() : nullptr;
+      SdCard* card = st->sd ? st->sd->card() : nullptr;
       if (!card) {
         code = ErrorCode::InternalError;
-        unlockBus(_internal);
+        unlockBus(st);
         break;
       }
 
@@ -1850,89 +2004,89 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         code = ErrorCode::Timeout;
       } else if (ioError) {
         code = ErrorCode::IoError;
-        detail = _internal->sd ? _internal->sd->sdErrorCode() : 0;
+        detail = st->sd ? st->sd->sdErrorCode() : 0;
       }
 
-      fsInfo = buildFsInfo(_internal, true);
-      setFsInfo(_internal, fsInfo);
-      setCardInfo(_internal, cardInfo);
-      unlockBus(_internal);
+      fsInfo = buildFsInfo(st, true);
+      setFsInfo(st, fsInfo);
+      setCardInfo(st, cardInfo);
+      unlockBus(st);
       break;
     }
     case RequestType::Open: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
       const uint8_t flags = toSdFatFlags(req.openMode);
-      const FileHandle handle = allocateFileSlot(_internal);
+      const FileHandle handle = allocateFileSlot(st);
       if (handle == INVALID_FILE_HANDLE) {
         code = ErrorCode::TooManyOpenFiles;
-        unlockBus(_internal);
+        unlockBus(st);
         break;
       }
-      FileSlot* slotFile = getFileSlot(_internal, handle);
+      FileSlot* slotFile = getFileSlot(st, handle);
       if (!slotFile || !slotFile->file.open(req.path, flags)) {
         if (slotFile) {
           slotFile->inUse = false;
         }
         detail = errno;
         code = ErrorCode::IoError;
-        unlockBus(_internal);
+        unlockBus(st);
         break;
       }
-      unlockBus(_internal);
+      unlockBus(st);
       outHandle = handle;
       break;
     }
     case RequestType::Close: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      FileSlot* slotFile = getFileSlot(_internal, req.handle);
+      FileSlot* slotFile = getFileSlot(st, req.handle);
       if (!slotFile) {
         code = ErrorCode::InvalidArgument;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
       slotFile->file.close();
       slotFile->inUse = false;
-      unlockBus(_internal);
+      unlockBus(st);
       break;
     }
     case RequestType::Read: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      FileSlot* slotFile = getFileSlot(_internal, req.handle);
+      FileSlot* slotFile = getFileSlot(st, req.handle);
       if (!slotFile) {
         code = ErrorCode::InvalidArgument;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
       if (!req.started && req.offset != APPEND_OFFSET) {
         if (!slotFile->file.seekSet(req.offset)) {
           code = ErrorCode::IoError;
-          unlockBus(_internal);
+          unlockBus(st);
           break;
         }
       }
       req.started = true;
       const uint32_t remaining = req.length - req.processed;
       const uint32_t chunk =
-          remaining > _config.ioChunkBytes ? _config.ioChunkBytes : remaining;
+          remaining > cfg.ioChunkBytes ? cfg.ioChunkBytes : remaining;
       const int32_t readCount =
           slotFile->file.read(static_cast<uint8_t*>(req.buffer) + req.processed, chunk);
       if (readCount < 0) {
@@ -1942,29 +2096,29 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         req.processed += static_cast<uint32_t>(readCount);
         bytesDone = req.processed;
       }
-      unlockBus(_internal);
+      unlockBus(st);
       const uint32_t ioMs = millis();
       if (code == ErrorCode::Ok && readCount > 0) {
-        recordIoSuccess(_internal, ioMs);
+        recordIoSuccess(st, ioMs);
       }
       if (code == ErrorCode::Ok && req.processed < req.length && readCount > 0 &&
           !budgetExceeded(startUs, budgetUs)) {
-        recordProgress(_internal, ioMs);
+        recordProgress(st, ioMs);
         return;
       }
       break;
     }
     case RequestType::Write: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      FileSlot* slotFile = getFileSlot(_internal, req.handle);
+      FileSlot* slotFile = getFileSlot(st, req.handle);
       if (!slotFile) {
         code = ErrorCode::InvalidArgument;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
@@ -1972,32 +2126,32 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         if (req.offset == APPEND_OFFSET) {
           if (!slotFile->file.seekEnd()) {
             code = ErrorCode::IoError;
-            unlockBus(_internal);
+            unlockBus(st);
             break;
           }
         } else {
           if (!slotFile->file.seekSet(req.offset)) {
             code = ErrorCode::IoError;
-            unlockBus(_internal);
+            unlockBus(st);
             break;
           }
         }
       }
       req.started = true;
-      if (_internal->fsInfo.fsType == FsType::Fat32) {
+      if (st->fsInfo.fsType == FsType::Fat32) {
         const uint64_t fileSize = slotFile->file.fileSize();
         const uint64_t base =
             (req.offset == APPEND_OFFSET) ? fileSize : req.offset;
         const uint64_t target = (fileSize > base) ? fileSize : base;
         if (target + static_cast<uint64_t>(req.length) > 0xFFFFFFFFULL) {
           code = ErrorCode::FileTooLarge;
-          unlockBus(_internal);
+          unlockBus(st);
           break;
         }
       }
       const uint32_t remaining = req.length - req.processed;
       const uint32_t chunk =
-          remaining > _config.ioChunkBytes ? _config.ioChunkBytes : remaining;
+          remaining > cfg.ioChunkBytes ? cfg.ioChunkBytes : remaining;
       const size_t written =
           slotFile->file.write(static_cast<const uint8_t*>(req.buffer) + req.processed, chunk);
       if (written == 0) {
@@ -2007,91 +2161,91 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
         req.processed += static_cast<uint32_t>(written);
         bytesDone = req.processed;
       }
-      unlockBus(_internal);
+      unlockBus(st);
       const uint32_t ioMs = millis();
       if (code == ErrorCode::Ok && written > 0) {
-        recordIoSuccess(_internal, ioMs);
+        recordIoSuccess(st, ioMs);
       }
       if (code == ErrorCode::Ok && req.processed < req.length &&
           !budgetExceeded(startUs, budgetUs)) {
-        recordProgress(_internal, ioMs);
+        recordProgress(st, ioMs);
         return;
       }
       break;
     }
     case RequestType::Sync: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      FileSlot* slotFile = getFileSlot(_internal, req.handle);
+      FileSlot* slotFile = getFileSlot(st, req.handle);
       if (!slotFile) {
         code = ErrorCode::InvalidArgument;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
       if (!slotFile->file.sync()) {
         code = ErrorCode::IoError;
       } else {
-        recordIoSuccess(_internal, millis());
+        recordIoSuccess(st, millis());
       }
-      unlockBus(_internal);
+      unlockBus(st);
       break;
     }
     case RequestType::Mkdir: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
-      if (!_internal->sd->mkdir(req.path, true)) {
+      if (!st->sd->mkdir(req.path, true)) {
         code = ErrorCode::IoError;
       }
-      unlockBus(_internal);
+      unlockBus(st);
       break;
     }
     case RequestType::Remove: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
-      if (!_internal->sd->remove(req.path)) {
-        if (!_internal->sd->rmdir(req.path)) {
+      if (!st->sd->remove(req.path)) {
+        if (!st->sd->rmdir(req.path)) {
           code = ErrorCode::IoError;
         }
       }
-      unlockBus(_internal);
+      unlockBus(st);
       break;
     }
     case RequestType::Stat: {
-      if (!_internal->mounted) {
+      if (!st->mounted) {
         code = ErrorCode::NotReady;
         break;
       }
-      if (!lockBus(_internal, _config)) {
+      if (!lockBus(st, cfg)) {
         code = ErrorCode::BusNotAvailable;
         break;
       }
       FsFile f;
       if (!f.open(req.path, O_RDONLY)) {
         code = ErrorCode::IoError;
-        unlockBus(_internal);
+        unlockBus(st);
         break;
       }
       stat.size = f.fileSize();
       stat.isDir = f.isDir();
       f.close();
-      unlockBus(_internal);
+      unlockBus(st);
       break;
     }
     default:
@@ -2101,42 +2255,55 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
 
   if (isIoRequest) {
     if (code == ErrorCode::Ok) {
-      if (_internal->mounted) {
-        setStatus(_internal, SdStatus::Ready);
+      if (st->mounted) {
+        setStatus(st, SdStatus::Ready);
       }
     } else if (code == ErrorCode::NotReady) {
-      setStatus(_internal, _internal->cdEnabled ? (_internal->cardPresent ? SdStatus::CardInserted
-                                                                          : SdStatus::NoCard)
-                                                : SdStatus::NoCard);
+      setStatus(st, st->cdEnabled ? (st->cardPresent ? SdStatus::CardInserted
+                                                      : SdStatus::NoCard)
+                                  : SdStatus::NoCard);
     } else {
-      setStatus(_internal, SdStatus::Error);
+      setStatus(st, SdStatus::Error);
     }
   }
 
-  releaseCopySlot(_internal, req);
-  enqueueResult(_internal, _config, req, code, detail, bytesDone, outHandle, stat);
+  releaseCopySlot(st, req);
+  enqueueResult(st, cfg, req, code, detail, bytesDone, outHandle, stat);
   if (code != ErrorCode::Ok) {
-    setLastError(_internal, code, opFromRequest(req.type), detail, req.path, req.length,
+    setLastError(st, code, opFromRequest(req.type), detail, req.path, req.length,
                  bytesDone);
-    if (!_internal->cdEnabled && (code == ErrorCode::IoError || code == ErrorCode::NotReady)) {
-      if (_internal->probeFailures.recordFailure()) {
-        _internal->pendingAutoUnmount = true;
-        _internal->probeFailures.reset();
+    if (!st->cdEnabled && (code == ErrorCode::IoError || code == ErrorCode::NotReady)) {
+      if (st->probeFailures.recordFailure()) {
+        st->pendingAutoUnmount = true;
+        st->probeFailures.reset();
       }
     }
-    recordFailure(_internal);
+    recordFailure(st);
   } else {
-    recordSuccess(_internal);
+    recordSuccess(st);
   }
 
-  recordProgress(_internal, millis());
-  portENTER_CRITICAL(&_internal->queueMux);
+  recordProgress(st, millis());
+  portENTER_CRITICAL(&st->queueMux);
   slot.inUse = false;
-  _internal->reqHead = static_cast<uint8_t>((_internal->reqHead + 1) % _internal->reqDepth);
-  _internal->reqCount--;
-  const uint8_t depth = _internal->reqCount;
-  portEXIT_CRITICAL(&_internal->queueMux);
-  _internal->health.queueDepthRequests.store(depth, std::memory_order_relaxed);
+  st->reqHead = static_cast<uint8_t>((st->reqHead + 1) % st->reqDepth);
+  if (st->reqCount > 0) {
+    st->reqCount--;
+  }
+  const uint8_t depth = st->reqCount;
+  portEXIT_CRITICAL(&st->queueMux);
+  st->health.queueDepthRequests.store(depth, std::memory_order_relaxed);
+}
+
+void SdCardManager::workerStep(uint32_t budgetUs) {
+  if (!_internal || !_internal->initialized) {
+    return;
+  }
+  if (_config.useWorkerTask && _internal->task &&
+      xTaskGetCurrentTaskHandle() != _internal->task) {
+    return;
+  }
+  workerStepCore(_internal, _config, budgetUs);
 }
 
 }  // namespace AsyncSD

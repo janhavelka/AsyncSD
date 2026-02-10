@@ -244,6 +244,7 @@ if (sd.getResult(id, &res)) {
 by `copyWriteSlots`.
 
 **Append writes:** Use `AsyncSD::APPEND_OFFSET` as the offset to append to the end of a file.
+`APPEND_OFFSET` is write-only; `requestRead()` requires a concrete byte offset.
 
 **Result overflow telemetry:** If the result queue overflows, `getDroppedResults()` increments and
 `lastErrorInfo()` reports `ResultEnqueue` with `ErrorCode::Busy`.
