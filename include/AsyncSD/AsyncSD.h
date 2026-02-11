@@ -26,6 +26,14 @@ enum class OpenMode : uint8_t {
   Exclusive = 1 << 5
 };
 
+/// @brief Path rename behavior when destination already exists.
+enum class RenameMode : uint8_t {
+  /// @brief Fail if destination already exists.
+  FailIfExists = 0,
+  /// @brief Replace destination if it already exists.
+  ReplaceIfExists = 1
+};
+
 /// @brief Bitwise OR for OpenMode.
 inline OpenMode operator|(OpenMode a, OpenMode b) {
   return static_cast<OpenMode>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
@@ -284,6 +292,19 @@ class SdCardManager {
    * @return RequestId or INVALID_REQUEST_ID if enqueue failed.
    */
   RequestId requestRemove(const char* path,
+                          ResultCallback cb = nullptr, void* user = nullptr);
+
+  /**
+   * @brief Enqueue a rename request.
+   * @param fromPath Source path.
+   * @param toPath Destination path.
+   * @param mode Destination handling policy when target exists.
+   * @param cb Optional callback invoked on completion (worker context).
+   * @param user User context pointer passed to callback.
+   * @return RequestId or INVALID_REQUEST_ID if enqueue failed.
+   */
+  RequestId requestRename(const char* fromPath, const char* toPath,
+                          RenameMode mode = RenameMode::FailIfExists,
                           ResultCallback cb = nullptr, void* user = nullptr);
 
   /**

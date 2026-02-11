@@ -11,8 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet
 
 ### Changed
+- Nothing yet
+
+### Fixed
+- Nothing yet
+
+## [1.1.0] - 2026-02-11
+
+### Added
+- Added `requestRename(fromPath, toPath, mode)` async API with `RenameMode` destination policy
+- Added `RequestType::Rename` and `Operation::Rename`
+- Added `ErrorCode::NotFound` and `ErrorCode::AlreadyExists` for path-existence failures
+- Added CLI example support for `rename` command in `01_spi_cli_control`
+- Added native host test coverage for rename request flows, queue saturation, timeout behavior, result overflow telemetry, and reinit lifecycle
+
+### Changed
 - Hardened `begin()` validation/sanitization for path bounds, worker stack sizing, and backoff thresholds
 - Worker task entry now runs from internal state/config only (no `SdCardManager*` dereference from task loop)
+- Extended internal request path storage to hold bounded source/destination paths for two-path operations
+- Rename worker flow now uses explicit source/destination existence checks and replace-if-exists behavior
+- Clamped configuration time windows to a signed-safe range to prevent immediate timeout/stall behavior on extreme values
+- Updated native test configuration to build library + stubs only (`src/**` and `test/stubs/**`)
 
 ### Fixed
 - Fixed potential use-after-free when the manager object is destroyed while the worker task is still running
@@ -23,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed unsupported-filesystem mount cleanup to respect SPI bus locking during transport shutdown
 - Fixed `requestWriteCopy()` pre-begin/callback-context validation paths to return deterministic errors
 - Fixed `requestRead()` to reject `APPEND_OFFSET` as invalid input
+- Fixed rename error mapping to surface deterministic `NotFound`/`AlreadyExists` outcomes
+- Fixed rename same-path handling to complete as a no-op success
+- Fixed rename filesystem `ENOENT` fallback mapping to `NotFound` for race-safe semantics
+- Fixed mount-point path normalization so long prefixed inputs are accepted when stripped paths fit configured limits
+- Fixed queue counter drift handling by self-healing request/result queue heads when counters and slots diverge
+- Fixed missing filesystem error detail propagation for multiple I/O operations (`open/read/write/sync/mkdir/remove/stat`)
 
 ## [1.0.0] - 2026-02-02
 
@@ -47,5 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Compile-only examples
 
-[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/YOUR_USERNAME/AsyncSD/releases/tag/v1.0.0

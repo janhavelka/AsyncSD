@@ -61,7 +61,9 @@ enum class ErrorCode : uint16_t {
   NotReady,
   NotInitialized,
   Unsupported,
-  InternalError
+  InternalError,
+  NotFound,
+  AlreadyExists
 };
 
 /// @brief Operation enum for structured error reporting.
@@ -84,7 +86,8 @@ enum class Operation : uint8_t {
   Probe,
   Lock,
   Enqueue,
-  ResultEnqueue
+  ResultEnqueue,
+  Rename
 };
 
 /// @brief Filesystem type.
@@ -116,7 +119,8 @@ enum class RequestType : uint8_t {
   Sync,
   Mkdir,
   Remove,
-  Stat
+  Stat,
+  Rename
 };
 
 /// @brief Structured error info snapshot.

@@ -61,7 +61,8 @@ struct Backoff {
     if (currentMs == 0) {
       currentMs = minMs;
     } else {
-      const uint32_t next = currentMs * 2U;
+      const uint32_t next =
+          (currentMs > (UINT32_MAX / 2U)) ? UINT32_MAX : (currentMs * 2U);
       currentMs = (next > maxMs) ? maxMs : next;
     }
     nextMs = nowMs + currentMs;

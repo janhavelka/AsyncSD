@@ -79,7 +79,7 @@ inline bool shouldStall(uint32_t nowMs, uint32_t lastProgressMs, uint32_t stallM
   if (!hasPendingWork || stallMs == 0 || lastProgressMs == 0) {
     return false;
   }
-  return static_cast<int32_t>(nowMs - (lastProgressMs + stallMs)) >= 0;
+  return static_cast<uint32_t>(nowMs - lastProgressMs) >= stallMs;
 }
 
 /// @brief Shutdown policy helper.

@@ -164,7 +164,7 @@ See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
 
 **ErrorCode** (examples):
 - `Timeout`, `BusNotAvailable`, `CardInitFailed`, `MountFailed`, `IoError`, `NoSpaceLeft`,
-  `InvalidArgument`, `NoMem`, `InvalidContext`
+  `InvalidArgument`, `NoMem`, `InvalidContext`, `NotFound`, `AlreadyExists`
 
 **ErrorInfo**
 - operation (`Operation` enum)
@@ -243,6 +243,9 @@ if (sd.getResult(id, &res)) {
 (stack data, ISR-produced buffers, etc.). Copy size is limited by `maxCopyWriteBytes` and pool size
 by `copyWriteSlots`.
 
+**Renames:** `requestRename(from, to, mode)` performs nonblocking file/directory rename with explicit
+destination behavior: `RenameMode::FailIfExists` or `RenameMode::ReplaceIfExists`.
+
 **Append writes:** Use `AsyncSD::APPEND_OFFSET` as the offset to append to the end of a file.
 `APPEND_OFFSET` is write-only; `requestRead()` requires a concrete byte offset.
 
@@ -265,7 +268,7 @@ and must not call back into AsyncSD APIs or `end()` to avoid deadlocks/UAF.
 
 ## Testing
 
-Host-only tests (debounce/backoff logic):
+Host-only tests (debounce/backoff logic, rename flows, and robustness helpers):
 
 ```bash
 pio test -e native_test

@@ -17,11 +17,13 @@
  *   sync <handle>
  *   mkdir <path>
  *   rm <path>
+ *   rename <from> <to> [replace]
  *   stat <path>
  *   stress <count>
  */
 
 #include <Arduino.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -178,6 +180,16 @@ static AsyncSD::OpenMode parseMode(const char* modeStr) {
   return mode;
 }
 
+static AsyncSD::RenameMode parseRenameMode(const char* modeStr) {
+  if (!modeStr || modeStr[0] == '\0') {
+    return AsyncSD::RenameMode::FailIfExists;
+  }
+  if (strcmp(modeStr, "replace") == 0 || strcmp(modeStr, "1") == 0) {
+    return AsyncSD::RenameMode::ReplaceIfExists;
+  }
+  return AsyncSD::RenameMode::FailIfExists;
+}
+
 static void printHelp() {
   Serial.println();
   Serial.println(F("=== AsyncSD CLI ==="));
@@ -200,6 +212,7 @@ static void printHelp() {
   Serial.println(F("  sync <handle>"));
   Serial.println(F("  mkdir <path>"));
   Serial.println(F("  rm <path>"));
+  Serial.println(F("  rename <from> <to> [replace]"));
   Serial.println(F("  stat <path>"));
   Serial.println(F("  stress <count>"));
   Serial.println(F("Mode flags: r w a c t x (read/write/append/create/truncate/exclusive)"));
@@ -554,6 +567,14 @@ static void processLine(char* line) {
   } else if (strcmp(cmd, "rm") == 0) {
     char* path = strtok(nullptr, "");
     g_sd.requestRemove(path);
+  } else if (strcmp(cmd, "rename") == 0) {
+    char* fromPath = strtok(nullptr, " ");
+    char* toPath = strtok(nullptr, " ");
+    char* mode = strtok(nullptr, " ");
+    if (!fromPath || !toPath) {
+      return;
+    }
+    g_sd.requestRename(fromPath, toPath, parseRenameMode(mode));
   } else if (strcmp(cmd, "stat") == 0) {
     char* path = strtok(nullptr, "");
     g_sd.requestStat(path);
