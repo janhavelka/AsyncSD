@@ -8,13 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet
+- Added `requestListDir(path, entries, maxEntries, cb, user)` async directory listing API
+- Added `DirEntry` struct (name, size, isDir) and `ListDir` to `RequestType`/`Operation` enums
+- Added CLI commands: `ls [path]`, `touch <path>`, `cat <path> [maxlen]`
+- Added `errorCodeToStr()` and `requestTypeToStr()` helpers to CLI example
+- Added named error codes and detail field to CLI result output
 
 ### Changed
-- Nothing yet
+- `performMount()` now forces unmount-then-remount when already mounted, enabling clean re-initialization after card re-insertion
+- Info request error detail now uses packed `(sdErrorData << 8) | sdErrorCode` for richer diagnostics
 
 ### Fixed
-- Nothing yet
+- Fixed `FsFile::open()` flag truncation on ESP32: `toSdFatFlags()` returned `uint8_t` but ESP32 fcntl flags (`O_CREAT=0x200`, `O_TRUNC=0x400`, `O_EXCL=0x800`) exceed 8 bits — changed to `int`
+- Fixed `FsFile::open()` using static `FsVolume::m_cwv` pointer (2-arg form) which was not reliably set — changed all 5 call sites to explicit 3-arg `open(volume, path, flags)` form
+- Fixed `requestListDir()` returning 0 entries: `bytesDone` was captured before the switch statement but `ListDir` case wrote count to `req.processed` without updating `bytesDone`
+- Fixed stale `FsInfo`/`CardInfo` displayed after card ejection: Info handler was caching `buildFsInfo()` results even on I/O error; now clears caches on failure
+- Fixed stale cached info persisting between probe failures: `FsInfo`/`CardInfo` now cleared immediately on first I/O or probe failure, not only after unmount
+- Fixed `mkdir` failing on already-existing directories: now checks existence before attempting create
 
 ## [1.1.0] - 2026-02-11
 
