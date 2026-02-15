@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.1] - 2026-02-15
 
 ### Added
 - Added `requestListDir(path, entries, maxEntries, cb, user)` async directory listing API
@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed stale `FsInfo`/`CardInfo` displayed after card ejection: Info handler was caching `buildFsInfo()` results even on I/O error; now clears caches on failure
 - Fixed stale cached info persisting between probe failures: `FsInfo`/`CardInfo` now cleared immediately on first I/O or probe failure, not only after unmount
 - Fixed `mkdir` failing on already-existing directories: now checks existence before attempting create
+
+## [Unreleased]
+
+### Added
+- Nothing yet
+
+### Changed
+- Nothing yet
+
+### Fixed
+- Nothing yet
 
 ## [1.1.0] - 2026-02-11
 
