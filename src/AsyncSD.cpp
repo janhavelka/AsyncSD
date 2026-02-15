@@ -274,6 +274,8 @@ static Operation opFromRequest(RequestType type) {
       return Operation::Stat;
     case RequestType::Rename:
       return Operation::Rename;
+    case RequestType::ListDir:
+      return Operation::ListDir;
     default:
       return Operation::None;
   }
@@ -1485,6 +1487,21 @@ RequestId SdCardManager::requestStat(const char* path, ResultCallback cb, void* 
              : INVALID_REQUEST_ID;
 }
 
+RequestId SdCardManager::requestListDir(const char* path, DirEntry* entries, uint16_t maxEntries,
+                                        ResultCallback cb, void* user) {
+  if (!_internal || !path || !entries || maxEntries == 0) {
+    if (_internal) {
+      setLastError(_internal, ErrorCode::InvalidArgument, Operation::ListDir, 0, path, 0, 0);
+    }
+    return INVALID_REQUEST_ID;
+  }
+  return enqueueInternal(_internal, _config, RequestType::ListDir, path, nullptr,
+                         INVALID_FILE_HANDLE, OpenMode::None, RenameMode::FailIfExists,
+                         0, entries, maxEntries, 0xFF, cb, user)
+             ? _internal->nextRequestId - 1
+             : INVALID_REQUEST_ID;
+}
+
 bool SdCardManager::getResult(RequestId id, RequestResult* out) {
   if (!_internal || !out || id == INVALID_REQUEST_ID) {
     return false;
@@ -2468,6 +2485,46 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
       stat.size = f.fileSize();
       stat.isDir = f.isDir();
       f.close();
+      unlockBus(st);
+      break;
+    }
+    case RequestType::ListDir: {
+      if (!st->mounted) {
+        code = ErrorCode::NotReady;
+        break;
+      }
+      if (!lockBus(st, cfg)) {
+        code = ErrorCode::BusNotAvailable;
+        break;
+      }
+      FsFile dir;
+      if (!dir.open(req.fromPath, O_RDONLY)) {
+        detail = fsFailureDetail(st);
+        code = (detail == ENOENT) ? ErrorCode::NotFound : ErrorCode::IoError;
+        unlockBus(st);
+        break;
+      }
+      if (!dir.isDir()) {
+        dir.close();
+        code = ErrorCode::InvalidArgument;
+        unlockBus(st);
+        break;
+      }
+      DirEntry* entries = static_cast<DirEntry*>(req.buffer);
+      const uint32_t maxEntries = req.length;
+      uint32_t count = 0;
+      FsFile entry;
+      while (count < maxEntries && entry.openNext(&dir, O_RDONLY)) {
+        DirEntry& de = entries[count];
+        de.name[0] = '\0';
+        entry.getName(de.name, sizeof(de.name));
+        de.size = entry.fileSize();
+        de.isDir = entry.isDir();
+        entry.close();
+        count++;
+      }
+      dir.close();
+      req.processed = count;
       unlockBus(st);
       break;
     }

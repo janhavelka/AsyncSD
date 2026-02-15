@@ -19,6 +19,8 @@
  *   rm <path>
  *   rename <from> <to> [replace]
  *   stat <path>
+ *   ls [path]
+ *   touch <path>
  *   stress <count>
  */
 
@@ -33,6 +35,11 @@
 #include "examples/common/Log.h"
 
 static AsyncSD::SdCardManager g_sd;
+
+// --- ListDir support ---
+static constexpr uint16_t LS_MAX_ENTRIES = 64;
+static AsyncSD::DirEntry g_dirEntries[LS_MAX_ENTRIES];
+static AsyncSD::RequestId g_lsRequestId = AsyncSD::INVALID_REQUEST_ID;
 
 struct PendingBuffer {
   AsyncSD::RequestId id = AsyncSD::INVALID_REQUEST_ID;
@@ -57,6 +64,57 @@ struct StressState {
 };
 
 static StressState g_stress;
+
+static const char* errorCodeToStr(AsyncSD::ErrorCode c) {
+  switch (c) {
+    case AsyncSD::ErrorCode::Ok:              return "Ok";
+    case AsyncSD::ErrorCode::Timeout:         return "Timeout";
+    case AsyncSD::ErrorCode::Busy:            return "Busy";
+    case AsyncSD::ErrorCode::NoMem:           return "NoMem";
+    case AsyncSD::ErrorCode::Fault:           return "Fault";
+    case AsyncSD::ErrorCode::BusNotAvailable: return "BusNotAvailable";
+    case AsyncSD::ErrorCode::CardInitFailed:  return "CardInitFailed";
+    case AsyncSD::ErrorCode::MountFailed:     return "MountFailed";
+    case AsyncSD::ErrorCode::FsUnsupported:   return "FsUnsupported";
+    case AsyncSD::ErrorCode::FsCorrupt:       return "FsCorrupt";
+    case AsyncSD::ErrorCode::IoError:         return "IoError";
+    case AsyncSD::ErrorCode::ReadOnly:        return "ReadOnly";
+    case AsyncSD::ErrorCode::WriteProtect:    return "WriteProtect";
+    case AsyncSD::ErrorCode::NoSpaceLeft:     return "NoSpaceLeft";
+    case AsyncSD::ErrorCode::FileTooLarge:    return "FileTooLarge";
+    case AsyncSD::ErrorCode::TooManyOpenFiles:return "TooManyOpenFiles";
+    case AsyncSD::ErrorCode::PathTooLong:     return "PathTooLong";
+    case AsyncSD::ErrorCode::NameTooLong:     return "NameTooLong";
+    case AsyncSD::ErrorCode::InvalidArgument: return "InvalidArgument";
+    case AsyncSD::ErrorCode::InvalidContext:  return "InvalidContext";
+    case AsyncSD::ErrorCode::NotReady:        return "NotReady";
+    case AsyncSD::ErrorCode::NotInitialized:  return "NotInitialized";
+    case AsyncSD::ErrorCode::Unsupported:     return "Unsupported";
+    case AsyncSD::ErrorCode::InternalError:   return "InternalError";
+    case AsyncSD::ErrorCode::NotFound:        return "NotFound";
+    case AsyncSD::ErrorCode::AlreadyExists:   return "AlreadyExists";
+    default:                                  return "Unknown";
+  }
+}
+
+static const char* requestTypeToStr(AsyncSD::RequestType t) {
+  switch (t) {
+    case AsyncSD::RequestType::Mount:    return "Mount";
+    case AsyncSD::RequestType::Unmount:  return "Unmount";
+    case AsyncSD::RequestType::Info:     return "Info";
+    case AsyncSD::RequestType::Open:     return "Open";
+    case AsyncSD::RequestType::Close:    return "Close";
+    case AsyncSD::RequestType::Read:     return "Read";
+    case AsyncSD::RequestType::Write:    return "Write";
+    case AsyncSD::RequestType::Sync:     return "Sync";
+    case AsyncSD::RequestType::Mkdir:    return "Mkdir";
+    case AsyncSD::RequestType::Remove:   return "Remove";
+    case AsyncSD::RequestType::Stat:     return "Stat";
+    case AsyncSD::RequestType::Rename:   return "Rename";
+    case AsyncSD::RequestType::ListDir:  return "ListDir";
+    default:                             return "Unknown";
+  }
+}
 
 static const char* statusToStr(AsyncSD::SdStatus st) {
   switch (st) {
@@ -214,6 +272,8 @@ static void printHelp() {
   Serial.println(F("  rm <path>"));
   Serial.println(F("  rename <from> <to> [replace]"));
   Serial.println(F("  stat <path>"));
+  Serial.println(F("  ls [path]"));
+  Serial.println(F("  touch <path>"));
   Serial.println(F("  stress <count>"));
   Serial.println(F("Mode flags: r w a c t x (read/write/append/create/truncate/exclusive)"));
   Serial.println();
@@ -440,18 +500,45 @@ static void handleResult(const AsyncSD::RequestResult& res) {
   Serial.print(F("Result id="));
   Serial.print(res.id);
   Serial.print(F(" type="));
-  Serial.print(static_cast<int>(res.type));
+  Serial.print(requestTypeToStr(res.type));
   Serial.print(F(" code="));
-  Serial.print(static_cast<int>(res.code));
+  Serial.print(errorCodeToStr(res.code));
+  if (res.detail != 0) {
+    Serial.print(F(" detail="));
+    Serial.print(res.detail);
+  }
   if (res.type == AsyncSD::RequestType::Open) {
     Serial.print(F(" handle="));
     Serial.print(res.handle);
   }
+  Serial.println();
+
   if (res.type == AsyncSD::RequestType::Info) {
-    Serial.println();
     printInfo(res.fsInfo, res.cardInfo);
   }
-  Serial.println();
+
+  if (res.type == AsyncSD::RequestType::Stat && res.code == AsyncSD::ErrorCode::Ok) {
+    Serial.print(F("  dir="));
+    Serial.print(res.stat.isDir ? "yes" : "no");
+    Serial.print(F(" size="));
+    Serial.println(static_cast<unsigned long long>(res.stat.size));
+  }
+
+  if (res.type == AsyncSD::RequestType::ListDir && res.id == g_lsRequestId) {
+    g_lsRequestId = AsyncSD::INVALID_REQUEST_ID;
+    if (res.code == AsyncSD::ErrorCode::Ok) {
+      const uint32_t count = res.bytesProcessed;
+      Serial.printf("  %lu entries:\n", static_cast<unsigned long>(count));
+      for (uint32_t i = 0; i < count; ++i) {
+        const AsyncSD::DirEntry& de = g_dirEntries[i];
+        if (de.isDir) {
+          Serial.printf("  [DIR]  %s\n", de.name);
+        } else {
+          Serial.printf("  %8llu  %s\n", static_cast<unsigned long long>(de.size), de.name);
+        }
+      }
+    }
+  }
 }
 
 static void processLine(char* line) {
@@ -578,6 +665,20 @@ static void processLine(char* line) {
   } else if (strcmp(cmd, "stat") == 0) {
     char* path = strtok(nullptr, "");
     g_sd.requestStat(path);
+  } else if (strcmp(cmd, "ls") == 0) {
+    char* path = strtok(nullptr, "");
+    if (!path || path[0] == '\0') {
+      path = const_cast<char*>("/");
+    }
+    g_lsRequestId = g_sd.requestListDir(path, g_dirEntries, LS_MAX_ENTRIES);
+    if (g_lsRequestId == AsyncSD::INVALID_REQUEST_ID) {
+      LOGE("ls request failed");
+    }
+  } else if (strcmp(cmd, "touch") == 0) {
+    char* path = strtok(nullptr, "");
+    if (path && path[0] != '\0') {
+      g_sd.requestOpen(path, AsyncSD::OpenMode::Write | AsyncSD::OpenMode::Create);
+    }
   } else if (strcmp(cmd, "stress") == 0) {
     char* cnt = strtok(nullptr, " ");
     uint32_t count = 0;
@@ -599,6 +700,7 @@ void setup() {
   cfg.pinMiso = pins::SPI_MISO;
   cfg.pinSck = pins::SPI_SCK;
   cfg.cdPin = pins::SD_CD;
+  cfg.autoInitSpi = true;
   cfg.autoMount = true;
   cfg.useWorkerTask = true;
 

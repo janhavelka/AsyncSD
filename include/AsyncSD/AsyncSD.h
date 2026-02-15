@@ -318,6 +318,19 @@ class SdCardManager {
                         ResultCallback cb = nullptr, void* user = nullptr);
 
   /**
+   * @brief Enqueue a directory listing request.
+   * @param path Directory path to list.
+   * @param entries Caller-owned array of DirEntry (must remain valid until result).
+   * @param maxEntries Maximum number of entries to fill.
+   * @param cb Optional callback invoked on completion (worker context).
+   * @param user User context pointer passed to callback.
+   * @return RequestId or INVALID_REQUEST_ID if enqueue failed.
+   * @note Result bytesProcessed contains the number of entries filled.
+   */
+  RequestId requestListDir(const char* path, DirEntry* entries, uint16_t maxEntries,
+                           ResultCallback cb = nullptr, void* user = nullptr);
+
+  /**
    * @brief Retrieve a completed result by request id.
    * @param id Request id.
    * @param out Output result structure.

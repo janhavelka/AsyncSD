@@ -87,7 +87,8 @@ enum class Operation : uint8_t {
   Lock,
   Enqueue,
   ResultEnqueue,
-  Rename
+  Rename,
+  ListDir
 };
 
 /// @brief Filesystem type.
@@ -120,7 +121,20 @@ enum class RequestType : uint8_t {
   Mkdir,
   Remove,
   Stat,
-  Rename
+  Rename,
+  ListDir
+};
+
+/// @brief Directory entry returned by requestListDir.
+struct DirEntry {
+  /// @brief Null-terminated filename (not full path).
+  char name[52]{};
+
+  /// @brief File size in bytes.
+  uint64_t size = 0;
+
+  /// @brief True if entry is a directory.
+  bool isDir = false;
 };
 
 /// @brief Structured error info snapshot.
