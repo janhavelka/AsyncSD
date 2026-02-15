@@ -46,16 +46,16 @@ struct SdCardConfig {
 
   /// @brief SPI chip select pin (required for SPI transport).
   /// @note Set to -1 to disable SPI transport.
-  int pinCs = -1;
+  int pinCs = 10;
 
   /// @brief SPI MOSI pin. Used only if autoInitSpi is true.
-  int pinMosi = -1;
+  int pinMosi = 11;
 
   /// @brief SPI MISO pin. Used only if autoInitSpi is true.
-  int pinMiso = -1;
+  int pinMiso = 13;
 
   /// @brief SPI SCK pin. Used only if autoInitSpi is true.
-  int pinSck = -1;
+  int pinSck = 12;
 
   /// @brief If true, library calls spi->begin(...). Default false (app owns bus).
   bool autoInitSpi = false;
