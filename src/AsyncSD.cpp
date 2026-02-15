@@ -393,8 +393,8 @@ static bool normalizePath(const SdCardConfig& cfg, const char* in, char* out, ui
   return true;
 }
 
-static uint8_t toSdFatFlags(OpenMode mode) {
-  uint8_t flags = 0;
+static int toSdFatFlags(OpenMode mode) {
+  int flags = 0;
   const bool read = hasFlag(mode, OpenMode::Read);
   const bool write = hasFlag(mode, OpenMode::Write);
 
@@ -428,7 +428,11 @@ static int32_t fsFailureDetail(Internal* st) {
     return err;
   }
   if (st && st->sd) {
-    return st->sd->sdErrorCode();
+    const uint8_t ec = st->sd->sdErrorCode();
+    const uint8_t ed = st->sd->sdErrorData();
+    if (ec != 0 || ed != 0) {
+      return static_cast<int32_t>((static_cast<uint16_t>(ed) << 8) | ec);
+    }
   }
   return 0;
 }
@@ -586,7 +590,7 @@ bool SpiTransport::probe(Internal* st, const SdCardConfig& cfg) {
     return false;
   }
   FsFile root;
-  const bool ok = root.open("/", O_RDONLY);
+  const bool ok = root.open(st->sd, "/", O_RDONLY);
   if (ok) {
     root.close();
   }
@@ -1741,7 +1745,8 @@ static ErrorCode performMount(Internal* st, const SdCardConfig& cfg) {
     return ErrorCode::InternalError;
   }
   if (st->mounted) {
-    return ErrorCode::Ok;
+    // Force clean re-init: unmount first, then fall through to mount
+    performUnmount(st, cfg);
   }
 
   setStatus(st, SdStatus::Mounting);
@@ -1913,9 +1918,14 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
       recordProgress(st, nowMs);
       if (ok) {
         st->probeFailures.recordSuccess();
-      } else if (st->probeFailures.recordFailure()) {
-        st->pendingAutoUnmount = true;
-        st->probeFailures.reset();
+      } else {
+        // Immediately invalidate cached info on probe failure
+        setFsInfo(st, FsInfo{});
+        setCardInfo(st, CardInfo{});
+        if (st->probeFailures.recordFailure()) {
+          st->pendingAutoUnmount = true;
+          st->probeFailures.reset();
+        }
       }
     }
   }
@@ -2172,12 +2182,18 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
         code = ErrorCode::Timeout;
       } else if (ioError) {
         code = ErrorCode::IoError;
-        detail = st->sd ? st->sd->sdErrorCode() : 0;
+        detail = fsFailureDetail(st);
       }
 
-      fsInfo = buildFsInfo(st, true);
-      setFsInfo(st, fsInfo);
-      setCardInfo(st, cardInfo);
+      if (code == ErrorCode::Ok) {
+        fsInfo = buildFsInfo(st, true);
+        setFsInfo(st, fsInfo);
+        setCardInfo(st, cardInfo);
+      } else {
+        // Clear cached info — card may be removed
+        setFsInfo(st, FsInfo{});
+        setCardInfo(st, CardInfo{});
+      }
       unlockBus(st);
       break;
     }
@@ -2190,7 +2206,7 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
         code = ErrorCode::BusNotAvailable;
         break;
       }
-      const uint8_t flags = toSdFatFlags(req.openMode);
+      const int flags = toSdFatFlags(req.openMode);
       const FileHandle handle = allocateFileSlot(st);
       if (handle == INVALID_FILE_HANDLE) {
         code = ErrorCode::TooManyOpenFiles;
@@ -2198,7 +2214,7 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
         break;
       }
       FileSlot* slotFile = getFileSlot(st, handle);
-      if (!slotFile || !slotFile->file.open(req.fromPath, flags)) {
+      if (!slotFile || !slotFile->file.open(st->sd, req.fromPath, flags)) {
         if (slotFile) {
           slotFile->inUse = false;
         }
@@ -2383,9 +2399,27 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
         code = ErrorCode::BusNotAvailable;
         break;
       }
+      // Check if path already exists before attempting mkdir
+      if (st->sd->exists(req.fromPath)) {
+        FsFile existing;
+        if (existing.open(st->sd, req.fromPath, O_RDONLY)) {
+          const bool wasDir = existing.isDir();
+          existing.close();
+          if (wasDir) {
+            // Directory already exists — treat as success
+            unlockBus(st);
+            break;
+          }
+        }
+        // Path exists but is not a directory
+        detail = EEXIST;
+        code = ErrorCode::AlreadyExists;
+        unlockBus(st);
+        break;
+      }
       if (!st->sd->mkdir(req.fromPath, true)) {
         detail = fsFailureDetail(st);
-        code = (detail == EEXIST) ? ErrorCode::AlreadyExists : ErrorCode::IoError;
+        code = ErrorCode::IoError;
       }
       unlockBus(st);
       break;
@@ -2476,7 +2510,7 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
         break;
       }
       FsFile f;
-      if (!f.open(req.fromPath, O_RDONLY)) {
+      if (!f.open(st->sd, req.fromPath, O_RDONLY)) {
         detail = fsFailureDetail(st);
         code = (detail == ENOENT) ? ErrorCode::NotFound : ErrorCode::IoError;
         unlockBus(st);
@@ -2498,7 +2532,7 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
         break;
       }
       FsFile dir;
-      if (!dir.open(req.fromPath, O_RDONLY)) {
+      if (!dir.open(st->sd, req.fromPath, O_RDONLY)) {
         detail = fsFailureDetail(st);
         code = (detail == ENOENT) ? ErrorCode::NotFound : ErrorCode::IoError;
         unlockBus(st);
@@ -2525,6 +2559,7 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
       }
       dir.close();
       req.processed = count;
+      bytesDone = count;
       unlockBus(st);
       break;
     }
@@ -2553,6 +2588,9 @@ static void workerStepCore(Internal* st, const SdCardConfig& cfg, uint32_t budge
     setLastError(st, code, opFromRequest(req.type), detail, errorPath, req.length,
                  bytesDone);
     if (!st->cdEnabled && (code == ErrorCode::IoError || code == ErrorCode::NotReady)) {
+      // Immediately invalidate cached info on I/O failure (card likely removed)
+      setFsInfo(st, FsInfo{});
+      setCardInfo(st, CardInfo{});
       if (st->probeFailures.recordFailure()) {
         st->pendingAutoUnmount = true;
         st->probeFailures.reset();

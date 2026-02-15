@@ -121,6 +121,8 @@ class FsFile {
   FsFile() = default;
 
   bool open(const char* path, uint8_t flags);
+  bool open(SdFs* vol, const char* path, uint8_t flags);
+  bool openNext(FsFile* dir, uint8_t flags);
   void close();
   int32_t read(uint8_t* dst, uint32_t len);
   size_t write(const uint8_t* src, uint32_t len);
@@ -129,6 +131,7 @@ class FsFile {
   bool sync();
   uint64_t fileSize() const;
   bool isDir() const;
+  bool getName(char* name, size_t size) const;
 
  private:
   std::string _path;
@@ -157,6 +160,7 @@ class SdFs {
   bool rename(const char* fromPath, const char* toPath);
 
   int32_t sdErrorCode() const;
+  uint8_t sdErrorData() const;
 
  private:
   SdCard _card{};

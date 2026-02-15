@@ -348,6 +348,28 @@ bool FsFile::isDir() const {
   return entry ? entry->isDir : false;
 }
 
+bool FsFile::open(SdFs* /*vol*/, const char* path, uint8_t flags) {
+  // Delegate to 2-arg form; stub uses global g_activeFs anyway
+  return open(path, flags);
+}
+
+bool FsFile::openNext(FsFile* /*dir*/, uint8_t /*flags*/) {
+  // Stub: no directory iteration support in tests
+  return false;
+}
+
+bool FsFile::getName(char* name, size_t size) const {
+  if (!name || size == 0) {
+    return false;
+  }
+  // Extract filename from path
+  size_t lastSlash = _path.rfind('/');
+  const char* base = (lastSlash != std::string::npos) ? _path.c_str() + lastSlash + 1 : _path.c_str();
+  strncpy(name, base, size - 1);
+  name[size - 1] = '\0';
+  return true;
+}
+
 bool SdFs::begin(const SdSpiConfig& /*cfg*/) {
   ensureRoot();
   g_mounted = true;
@@ -540,6 +562,10 @@ bool SdFs::rename(const char* fromPath, const char* toPath) {
 
 int32_t SdFs::sdErrorCode() const {
   return g_lastSdError;
+}
+
+uint8_t SdFs::sdErrorData() const {
+  return 0;
 }
 
 namespace sdfat_stub {

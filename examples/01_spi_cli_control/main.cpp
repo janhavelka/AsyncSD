@@ -21,6 +21,7 @@
  *   stat <path>
  *   ls [path]
  *   touch <path>
+ *   cat <path> [maxlen]
  *   stress <count>
  */
 
@@ -64,6 +65,21 @@ struct StressState {
 };
 
 static StressState g_stress;
+
+// --- Cat support ---
+enum class CatStage : uint8_t { Idle, Opening, Reading, Closing };
+
+struct CatState {
+  CatStage stage = CatStage::Idle;
+  bool active = false;
+  AsyncSD::FileHandle handle = AsyncSD::INVALID_FILE_HANDLE;
+  AsyncSD::RequestId pendingId = AsyncSD::INVALID_REQUEST_ID;
+  uint8_t buffer[256]{};
+  uint32_t maxBytes = 512;
+  uint32_t totalRead = 0;
+};
+
+static CatState g_cat;
 
 static const char* errorCodeToStr(AsyncSD::ErrorCode c) {
   switch (c) {
@@ -274,6 +290,7 @@ static void printHelp() {
   Serial.println(F("  stat <path>"));
   Serial.println(F("  ls [path]"));
   Serial.println(F("  touch <path>"));
+  Serial.println(F("  cat <path> [maxlen]"));
   Serial.println(F("  stress <count>"));
   Serial.println(F("Mode flags: r w a c t x (read/write/append/create/truncate/exclusive)"));
   Serial.println();
@@ -443,7 +460,8 @@ static void handleStressResult(const AsyncSD::RequestResult& res) {
     return;
   }
   if (res.code != AsyncSD::ErrorCode::Ok) {
-    LOGE("Stress failed, code=%d", static_cast<int>(res.code));
+    LOGE("Stress failed: %s (detail=%ld)",
+         errorCodeToStr(res.code), static_cast<long>(res.detail));
     g_stress.active = false;
     g_stress.stage = StressStage::Idle;
     return;
@@ -480,8 +498,62 @@ static void handleStressResult(const AsyncSD::RequestResult& res) {
   }
 }
 
+static void handleCatResult(const AsyncSD::RequestResult& res) {
+  if (!g_cat.active || res.id != g_cat.pendingId) {
+    return;
+  }
+  if (res.code != AsyncSD::ErrorCode::Ok) {
+    LOGE("Cat failed: %s (detail=%ld)",
+         errorCodeToStr(res.code), static_cast<long>(res.detail));
+    g_cat.active = false;
+    g_cat.stage = CatStage::Idle;
+    return;
+  }
+
+  switch (g_cat.stage) {
+    case CatStage::Opening:
+      g_cat.handle = res.handle;
+      g_cat.stage = CatStage::Reading;
+      {
+        uint32_t chunk = g_cat.maxBytes - g_cat.totalRead;
+        if (chunk > sizeof(g_cat.buffer)) {
+          chunk = sizeof(g_cat.buffer);
+        }
+        g_cat.pendingId = g_sd.requestRead(g_cat.handle, g_cat.totalRead,
+                                           g_cat.buffer, chunk);
+      }
+      break;
+    case CatStage::Reading:
+      if (res.bytesProcessed > 0) {
+        Serial.write(g_cat.buffer, res.bytesProcessed);
+        g_cat.totalRead += res.bytesProcessed;
+      }
+      if (res.bytesProcessed == 0 || g_cat.totalRead >= g_cat.maxBytes) {
+        Serial.println();
+        LOGI("Cat done, %lu bytes", static_cast<unsigned long>(g_cat.totalRead));
+        g_cat.stage = CatStage::Closing;
+        g_cat.pendingId = g_sd.requestClose(g_cat.handle);
+      } else {
+        uint32_t chunk = g_cat.maxBytes - g_cat.totalRead;
+        if (chunk > sizeof(g_cat.buffer)) {
+          chunk = sizeof(g_cat.buffer);
+        }
+        g_cat.pendingId = g_sd.requestRead(g_cat.handle, g_cat.totalRead,
+                                           g_cat.buffer, chunk);
+      }
+      break;
+    case CatStage::Closing:
+      g_cat.active = false;
+      g_cat.stage = CatStage::Idle;
+      break;
+    default:
+      break;
+  }
+}
+
 static void handleResult(const AsyncSD::RequestResult& res) {
   handleStressResult(res);
+  handleCatResult(res);
 
   PendingBuffer* buf = findBuffer(res.id);
   if (buf) {
@@ -679,6 +751,29 @@ static void processLine(char* line) {
     if (path && path[0] != '\0') {
       g_sd.requestOpen(path, AsyncSD::OpenMode::Write | AsyncSD::OpenMode::Create);
     }
+  } else if (strcmp(cmd, "cat") == 0) {
+    char* path = strtok(nullptr, " ");
+    char* maxArg = strtok(nullptr, " ");
+    if (!path || path[0] == '\0') {
+      LOGE("Usage: cat <path> [maxlen]");
+      return;
+    }
+    if (g_cat.active) {
+      LOGE("Cat already running");
+      return;
+    }
+    g_cat.active = true;
+    g_cat.stage = CatStage::Opening;
+    g_cat.totalRead = 0;
+    g_cat.maxBytes = 512;
+    if (maxArg) {
+      uint32_t m = 0;
+      if (parseU32(maxArg, &m) && m > 0) {
+        g_cat.maxBytes = m;
+      }
+    }
+    g_cat.pendingId = g_sd.requestOpen(path, AsyncSD::OpenMode::Read);
+    LOGI("Cat %s (max %lu bytes)", path, static_cast<unsigned long>(g_cat.maxBytes));
   } else if (strcmp(cmd, "stress") == 0) {
     char* cnt = strtok(nullptr, " ");
     uint32_t count = 0;
