@@ -1722,7 +1722,36 @@ static FsInfo buildFsInfo(Internal* st, bool includeUsage) {
   }
 
   if (includeUsage) {
+    // freeClusterCount() scans the entire FAT table in a tight loop.
+    // On large cards (e.g. 32 GB FAT32) this can take many seconds,
+    // starving the IDLE task on the current core and triggering the
+    // Task Watchdog Timer.  Temporarily unsubscribe the IDLE task
+    // from the TWDT for the duration of the scan.
+#if defined(ARDUINO_ARCH_ESP32)
+    const int wdtCore = xPortGetCoreID();
+    if (wdtCore == 0) {
+      disableCore0WDT();
+    }
+#if !defined(CONFIG_FREERTOS_UNICORE)
+    else if (wdtCore == 1) {
+      disableCore1WDT();
+    }
+#endif
+#endif  // ARDUINO_ARCH_ESP32
+
     const int32_t freeClusters = st->sd->freeClusterCount();
+
+#if defined(ARDUINO_ARCH_ESP32)
+    if (wdtCore == 0) {
+      enableCore0WDT();
+    }
+#if !defined(CONFIG_FREERTOS_UNICORE)
+    else if (wdtCore == 1) {
+      enableCore1WDT();
+    }
+#endif
+#endif  // ARDUINO_ARCH_ESP32
+
     if (freeClusters >= 0 && info.sectorsPerCluster > 0) {
       info.freeClusters = static_cast<uint32_t>(freeClusters);
       info.freeClustersValid = true;
