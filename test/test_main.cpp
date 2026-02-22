@@ -21,6 +21,10 @@ void test_rename_timeout_behavior();
 void test_rename_large_timeout_not_immediate_timeout();
 void test_rename_result_overflow_telemetry();
 void test_rename_reinit_lifecycle();
+void test_result_queue_getresult_no_overwrite();
+void test_result_queue_pop_after_get();
+void test_request_id_correctness();
+void test_listdir_bounded();
 
 void setUp() {}
 void tearDown() {}
@@ -50,5 +54,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_rename_large_timeout_not_immediate_timeout);
   RUN_TEST(test_rename_result_overflow_telemetry);
   RUN_TEST(test_rename_reinit_lifecycle);
+  RUN_TEST(test_result_queue_getresult_no_overwrite);
+  RUN_TEST(test_result_queue_pop_after_get);
+  RUN_TEST(test_request_id_correctness);
+  RUN_TEST(test_listdir_bounded);
   return UNITY_END();
 }

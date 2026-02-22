@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-22
+
+### Fixed
+- **Critical:** Fixed result queue slot overwrite when `getResult()` creates holes — `enqueueResult()` now scans for an empty slot instead of blindly using `resTail`, preventing data loss
+- **Important:** Fixed fragile request ID return pattern — `enqueueInternal()` now returns the assigned `RequestId` directly instead of callers reading `nextRequestId - 1` outside the critical section
+- **Important:** Fixed unbounded `ListDir` loop — directory iteration now checks deadline and budget on each entry, preventing worker stall on large directories
+- Fixed `failAllPending()` reading stale path pointers — copied `Request` path pointers are nulled before passing to `enqueueResult()` to avoid reference to reused slot memory
+- Fixed `requestInfo()` `freeClusterCount()` scan ignoring deadline — now checks deadline before starting the expensive FAT table scan
+- Fixed FAT32 4 GiB file-size check running on every write chunk — moved to first-chunk-only (seek phase) for correctness and efficiency
+
+### Changed
+- `performMount()` now uses `Initializing` → `Mounting` status progression: `Initializing` during SPI/card init, `Mounting` during filesystem verification
+- Card removal detection (CD pin and no-CD probe) now sets `SdStatus::Removed` before auto-unmount, implementing the documented status enum value
+- `enqueueInternal()` captures assigned ID inside the critical section via `const RequestId assignedId = req.id` for safe return
+
+### Added
+- New test file `test_queue_safety.cpp` with 4 regression tests: result queue overwrite, pop-after-get, request ID correctness, and ListDir budget bounds
+
 ## [1.1.2] - 2026-02-19
 
 ### Fixed
