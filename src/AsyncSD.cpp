@@ -1701,6 +1701,26 @@ static void markAllFilesClosed(Internal* st) {
   }
 }
 
+#if defined(ARDUINO_ARCH_ESP32)
+template <typename DisableFn>
+struct DisableIdleTaskWdt {
+  static bool run(DisableFn disableFn) { return disableFn(); }
+};
+
+template <>
+struct DisableIdleTaskWdt<void (*)()> {
+  static bool run(void (*disableFn)()) {
+    disableFn();
+    return true;
+  }
+};
+
+template <typename DisableFn>
+static bool disableIdleTaskWdt(DisableFn disableFn) {
+  return DisableIdleTaskWdt<DisableFn>::run(disableFn);
+}
+#endif
+
 static FsInfo buildFsInfo(Internal* st, bool includeUsage) {
   FsInfo info{};
   if (!st || !st->sd) {
@@ -1724,12 +1744,13 @@ static FsInfo buildFsInfo(Internal* st, bool includeUsage) {
     // from the TWDT for the duration of the scan.
 #if defined(ARDUINO_ARCH_ESP32)
     const int wdtCore = xPortGetCoreID();
+    bool wdtWasActive = false;
     if (wdtCore == 0) {
-      disableCore0WDT();
+      wdtWasActive = disableIdleTaskWdt(disableCore0WDT);
     }
 #if !defined(CONFIG_FREERTOS_UNICORE)
     else if (wdtCore == 1) {
-      disableCore1WDT();
+      wdtWasActive = disableIdleTaskWdt(disableCore1WDT);
     }
 #endif
 #endif  // ARDUINO_ARCH_ESP32
@@ -1737,14 +1758,16 @@ static FsInfo buildFsInfo(Internal* st, bool includeUsage) {
     const int32_t freeClusters = st->sd->freeClusterCount();
 
 #if defined(ARDUINO_ARCH_ESP32)
-    if (wdtCore == 0) {
-      enableCore0WDT();
-    }
+    if (wdtWasActive) {
+      if (wdtCore == 0) {
+        enableCore0WDT();
+      }
 #if !defined(CONFIG_FREERTOS_UNICORE)
-    else if (wdtCore == 1) {
-      enableCore1WDT();
-    }
+      else if (wdtCore == 1) {
+        enableCore1WDT();
+      }
 #endif
+    }
 #endif  // ARDUINO_ARCH_ESP32
 
     if (freeClusters >= 0 && info.sectorsPerCluster > 0) {

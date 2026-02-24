@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Nothing yet
+
+### Changed
+- Nothing yet
+
+### Fixed
+- Nothing yet
+
+## [1.2.1] - 2026-02-24
+
+### Fixed
+- Fixed `collectSdInfo()` usage scan WDT guard to re-enable core WDT only when `disableCore*WDT()` confirms the IDLE task was previously subscribed, preventing unintended re-subscribe and repeated TWDT triggers on ESP-IDF 5.x configurations with `idle_core_mask = 0`
+- Fixed cross-version compatibility of the same WDT guard by handling both `bool` (Arduino-ESP32 v3.x / IDF5) and `void` (Arduino-ESP32 v2.x / IDF4) `disableCore*WDT()` return signatures without changing older-core behavior
+
 ## [1.2.0] - 2026-02-22
 
 ### Fixed
@@ -48,17 +65,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed stale `FsInfo`/`CardInfo` displayed after card ejection: Info handler was caching `buildFsInfo()` results even on I/O error; now clears caches on failure
 - Fixed stale cached info persisting between probe failures: `FsInfo`/`CardInfo` now cleared immediately on first I/O or probe failure, not only after unmount
 - Fixed `mkdir` failing on already-existing directories: now checks existence before attempting create
-
-## [Unreleased]
-
-### Added
-- Nothing yet
-
-### Changed
-- Nothing yet
-
-### Fixed
-- Nothing yet
 
 ## [1.1.0] - 2026-02-11
 
@@ -116,7 +122,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Compile-only examples
 
-[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.0.0...v1.1.0
