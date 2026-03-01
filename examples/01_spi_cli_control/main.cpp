@@ -187,6 +187,48 @@ static const char* cardTypeToStr(AsyncSD::CardType type) {
   }
 }
 
+static const char* statusColor(AsyncSD::SdStatus st) {
+  switch (st) {
+    case AsyncSD::SdStatus::Ready:
+      return LOG_COLOR_GREEN;
+    case AsyncSD::SdStatus::Busy:
+    case AsyncSD::SdStatus::Initializing:
+    case AsyncSD::SdStatus::Mounting:
+      return LOG_COLOR_YELLOW;
+    case AsyncSD::SdStatus::Error:
+    case AsyncSD::SdStatus::Fault:
+      return LOG_COLOR_RED;
+    default:
+      return LOG_COLOR_RESET;
+  }
+}
+
+static const char* errorCodeColor(AsyncSD::ErrorCode c) {
+  return (c == AsyncSD::ErrorCode::Ok) ? LOG_COLOR_GREEN : LOG_COLOR_RED;
+}
+
+static const char* goodIfZeroColor(uint32_t value) {
+  return (value == 0U) ? LOG_COLOR_GREEN : LOG_COLOR_RED;
+}
+
+static const char* usageColor(uint32_t usedPercent) {
+  if (usedPercent >= 95U) {
+    return LOG_COLOR_RED;
+  }
+  if (usedPercent >= 80U) {
+    return LOG_COLOR_YELLOW;
+  }
+  return LOG_COLOR_GREEN;
+}
+
+static void printHelpSection(const char* title) {
+  Serial.printf("%s[%s]%s\n", LOG_COLOR_GREEN, title, LOG_COLOR_RESET);
+}
+
+static void printHelpItem(const char* cmd, const char* desc) {
+  Serial.printf("  %s%-32s%s - %s\n", LOG_COLOR_CYAN, cmd, LOG_COLOR_RESET, desc);
+}
+
 static void printHex(const uint8_t* data, size_t len) {
   for (size_t i = 0; i < len; ++i) {
     if (data[i] < 16) {
@@ -266,32 +308,37 @@ static AsyncSD::RenameMode parseRenameMode(const char* modeStr) {
 
 static void printHelp() {
   Serial.println();
-  Serial.println(F("=== AsyncSD CLI ==="));
+  Serial.printf("%s=== AsyncSD CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
   Serial.print(F("Version: "));
   Serial.println(AsyncSD::VERSION);
   Serial.print(F("Built:   "));
   Serial.println(AsyncSD::BUILD_TIMESTAMP);
-  Serial.println(F("Commands:"));
-  Serial.println(F("  help"));
-  Serial.println(F("  status"));
-  Serial.println(F("  health"));
-  Serial.println(F("  info"));
-  Serial.println(F("  mount"));
-  Serial.println(F("  unmount"));
-  Serial.println(F("  open <path> <mode>"));
-  Serial.println(F("  close <handle>"));
-  Serial.println(F("  read <handle> <offset> <len>"));
-  Serial.println(F("  write <handle> <offset|append> <data>"));
-  Serial.println(F("  writecopy <handle> <offset|append> <data>"));
-  Serial.println(F("  sync <handle>"));
-  Serial.println(F("  mkdir <path>"));
-  Serial.println(F("  rm <path>"));
-  Serial.println(F("  rename <from> <to> [replace]"));
-  Serial.println(F("  stat <path>"));
-  Serial.println(F("  ls [path]"));
-  Serial.println(F("  touch <path>"));
-  Serial.println(F("  cat <path> [maxlen]"));
-  Serial.println(F("  stress <count>"));
+  Serial.println();
+  printHelpSection("Common");
+  printHelpItem("help", "Show this help");
+  printHelpItem("status", "Print card/filesystem status");
+  printHelpItem("health", "Print worker and error health");
+  printHelpItem("info", "Query card and filesystem info");
+  printHelpItem("mount", "Request mount");
+  printHelpItem("unmount", "Request unmount");
+  Serial.println();
+  printHelpSection("Files");
+  printHelpItem("open <path> <mode>", "Open file");
+  printHelpItem("close <handle>", "Close file handle");
+  printHelpItem("read <handle> <offset> <len>", "Read bytes");
+  printHelpItem("write <handle> <offset|append> <data>", "Write bytes");
+  printHelpItem("writecopy <handle> <offset|append> <data>", "Write copy helper");
+  printHelpItem("sync <handle>", "Sync file");
+  printHelpItem("mkdir <path>", "Create directory");
+  printHelpItem("rm <path>", "Remove file or directory");
+  printHelpItem("rename <from> <to> [replace]", "Rename path");
+  printHelpItem("stat <path>", "Stat path");
+  printHelpItem("ls [path]", "List directory");
+  printHelpItem("touch <path>", "Create/truncate file");
+  printHelpItem("cat <path> [maxlen]", "Print file content");
+  Serial.println();
+  printHelpSection("Stress");
+  printHelpItem("stress <count>", "Append N lines to /stress.txt");
   Serial.println(F("Mode flags: r w a c t x (read/write/append/create/truncate/exclusive)"));
   Serial.println();
 }
@@ -299,8 +346,7 @@ static void printHelp() {
 static void printStatus() {
   const AsyncSD::SdStatus st = g_sd.status();
   const AsyncSD::FsInfo fs = g_sd.fsInfo();
-  Serial.print(F("Status: "));
-  Serial.println(statusToStr(st));
+  Serial.printf("Status: %s%s%s\n", statusColor(st), statusToStr(st), LOG_COLOR_RESET);
   Serial.print(F("FS: "));
   Serial.println(fsTypeToStr(fs.fsType));
   Serial.printf("Capacity bytes: %llu\n",
@@ -316,15 +362,21 @@ static void printStatus() {
   if (fs.usedBytesValid && fs.capacityBytes > 0) {
     const uint32_t pct =
         static_cast<uint32_t>((fs.usedBytes * 100ULL) / fs.capacityBytes);
-    Serial.printf("Used percent: %lu%%\n", static_cast<unsigned long>(pct));
+    Serial.printf("Used percent: %s%lu%%%s\n",
+                  usageColor(pct),
+                  static_cast<unsigned long>(pct),
+                  LOG_COLOR_RESET);
   }
 }
 
 static void printHealth() {
   const AsyncSD::ErrorInfo info = g_sd.lastErrorInfo();
   const AsyncSD::WorkerHealth health = g_sd.getWorkerHealth();
-  Serial.print(F("Last error code: "));
-  Serial.println(static_cast<int>(info.code));
+  Serial.printf("Last error code: %s%s%s (%d)\n",
+                errorCodeColor(info.code),
+                errorCodeToStr(info.code),
+                LOG_COLOR_RESET,
+                static_cast<int>(info.code));
   Serial.print(F("Op: "));
   Serial.println(static_cast<int>(info.op));
   Serial.print(F("Detail: "));
@@ -340,15 +392,20 @@ static void printHealth() {
   Serial.print(F("Last IO ms: "));
   Serial.println(health.lastSuccessfulIoMs);
   Serial.print(F("Consecutive failures: "));
-  Serial.println(health.consecutiveFailures);
+  Serial.printf("%s%u%s\n",
+                goodIfZeroColor(health.consecutiveFailures),
+                static_cast<unsigned>(health.consecutiveFailures),
+                LOG_COLOR_RESET);
   Serial.print(F("Req queue depth: "));
   Serial.println(health.queueDepthRequests);
   Serial.print(F("Res queue depth: "));
   Serial.println(health.queueDepthResults);
   Serial.print(F("Stall events: "));
   Serial.println(health.stallEvents);
-  Serial.print(F("Dropped results: "));
-  Serial.println(g_sd.getDroppedResults());
+  Serial.printf("Dropped results: %s%lu%s\n",
+                goodIfZeroColor(g_sd.getDroppedResults()),
+                static_cast<unsigned long>(g_sd.getDroppedResults()),
+                LOG_COLOR_RESET);
 }
 
 static void printInfo(const AsyncSD::FsInfo& fs, const AsyncSD::CardInfo& card) {
@@ -574,7 +631,9 @@ static void handleResult(const AsyncSD::RequestResult& res) {
   Serial.print(F(" type="));
   Serial.print(requestTypeToStr(res.type));
   Serial.print(F(" code="));
+  Serial.print(errorCodeColor(res.code));
   Serial.print(errorCodeToStr(res.code));
+  Serial.print(LOG_COLOR_RESET);
   if (res.detail != 0) {
     Serial.print(F(" detail="));
     Serial.print(res.detail);

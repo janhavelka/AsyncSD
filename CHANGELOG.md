@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Nothing yet
 
+## [1.3.0] - 2026-03-01
+
+### Changed
+- Aligned `examples/01_spi_cli_control` and shared log output with the unified CLI/help/reporting scheme used across repositories.
+
+### Fixed
+- Improved console readability by refining color emphasis to key status information only.
+
 ## [1.2.1] - 2026-02-24
 
 ### Fixed
@@ -122,7 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Compile-only examples
 
-[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.1...v1.1.2
