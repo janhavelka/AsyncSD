@@ -37,6 +37,15 @@
 
 static AsyncSD::SdCardManager g_sd;
 
+enum class LedMode : uint8_t {
+  Disabled = 0,
+  Off,
+  SolidOn,
+  BlinkSlow,
+  BlinkFast,
+  FaultHeartbeat
+};
+
 // --- ListDir support ---
 static constexpr uint16_t LS_MAX_ENTRIES = 64;
 static AsyncSD::DirEntry g_dirEntries[LS_MAX_ENTRIES];
@@ -221,6 +230,99 @@ static const char* usageColor(uint32_t usedPercent) {
   return LOG_COLOR_GREEN;
 }
 
+static LedMode ledModeForStatus(AsyncSD::SdStatus st) {
+  switch (st) {
+    case AsyncSD::SdStatus::Ready:
+    case AsyncSD::SdStatus::Busy:
+      return LedMode::SolidOn;
+    case AsyncSD::SdStatus::CardInserted:
+      return LedMode::BlinkSlow;
+    case AsyncSD::SdStatus::Initializing:
+    case AsyncSD::SdStatus::Mounting:
+      return LedMode::BlinkFast;
+    case AsyncSD::SdStatus::Error:
+    case AsyncSD::SdStatus::Fault:
+      return LedMode::FaultHeartbeat;
+    case AsyncSD::SdStatus::Disabled:
+    case AsyncSD::SdStatus::NoCard:
+    case AsyncSD::SdStatus::Removed:
+    default:
+      return LedMode::Off;
+  }
+}
+
+static bool ledOutputForMode(LedMode mode, uint32_t nowMs) {
+  switch (mode) {
+    case LedMode::SolidOn:
+      return true;
+    case LedMode::BlinkSlow:
+      return ((nowMs / 500U) % 2U) == 0U;
+    case LedMode::BlinkFast:
+      return ((nowMs / 125U) % 2U) == 0U;
+    case LedMode::FaultHeartbeat: {
+      const uint32_t phaseMs = nowMs % 1000U;
+      return phaseMs < 100U || (phaseMs >= 200U && phaseMs < 300U);
+    }
+    case LedMode::Disabled:
+    case LedMode::Off:
+    default:
+      return false;
+  }
+}
+
+static void writeStatusLed(bool on) {
+  if (pins::LED < 0) {
+    return;
+  }
+  const uint8_t level =
+      on ? (pins::LED_ACTIVE_HIGH ? HIGH : LOW)
+         : (pins::LED_ACTIVE_HIGH ? LOW : HIGH);
+  digitalWrite(static_cast<uint8_t>(pins::LED), level);
+}
+
+static void setupStatusLed() {
+  if (pins::LED < 0) {
+    return;
+  }
+  pinMode(static_cast<uint8_t>(pins::LED), OUTPUT);
+  writeStatusLed(false);
+}
+
+static void updateStatusLed() {
+  const LedMode mode = (pins::LED < 0) ? LedMode::Disabled
+                                       : ledModeForStatus(g_sd.status());
+  writeStatusLed(ledOutputForMode(mode, millis()));
+}
+
+static const char* rawLevelToStr(bool high) {
+  return high ? "HIGH" : "LOW";
+}
+
+static const char* cdPresenceColor(bool present) {
+  return present ? LOG_COLOR_GREEN : LOG_COLOR_YELLOW;
+}
+
+static void printPresenceInfo(const AsyncSD::PresenceInfo& presence) {
+  if (!presence.cdConfigured) {
+    Serial.println(F("CD pin: disabled"));
+    return;
+  }
+
+  const bool asserted = presence.cdActiveLow ? !presence.cdRawLevelHigh
+                                             : presence.cdRawLevelHigh;
+  Serial.printf("CD pin: GPIO%d (%s, %s)\n",
+                g_sd.config().cdPin,
+                presence.cdActiveLow ? "active-low" : "active-high",
+                presence.cdInterruptEnabled ? "interrupt+poll" : "poll");
+  Serial.printf("CD raw level: %s (%s)\n",
+                rawLevelToStr(presence.cdRawLevelHigh),
+                asserted ? "asserted" : "deasserted");
+  Serial.printf("CD logical present: %s%s%s\n",
+                cdPresenceColor(presence.cardPresent),
+                log_bool_str(presence.cardPresent),
+                LOG_COLOR_RESET);
+}
+
 static void printHelpSection(const char* title) {
   Serial.printf("%s[%s]%s\n", LOG_COLOR_GREEN, title, LOG_COLOR_RESET);
 }
@@ -346,7 +448,9 @@ static void printHelp() {
 static void printStatus() {
   const AsyncSD::SdStatus st = g_sd.status();
   const AsyncSD::FsInfo fs = g_sd.fsInfo();
+  const AsyncSD::PresenceInfo presence = g_sd.presenceInfo();
   Serial.printf("Status: %s%s%s\n", statusColor(st), statusToStr(st), LOG_COLOR_RESET);
+  printPresenceInfo(presence);
   Serial.print(F("FS: "));
   Serial.println(fsTypeToStr(fs.fsType));
   Serial.printf("Capacity bytes: %llu\n",
@@ -408,7 +512,11 @@ static void printHealth() {
                 LOG_COLOR_RESET);
 }
 
-static void printInfo(const AsyncSD::FsInfo& fs, const AsyncSD::CardInfo& card) {
+static void printInfo(const AsyncSD::FsInfo& fs, const AsyncSD::CardInfo& card,
+                      const AsyncSD::PresenceInfo& presence) {
+  Serial.println(F("=== Presence Info ==="));
+  printPresenceInfo(presence);
+
   Serial.println(F("=== Card Info ==="));
   Serial.print(F("Type: "));
   Serial.println(cardTypeToStr(card.type));
@@ -645,7 +753,7 @@ static void handleResult(const AsyncSD::RequestResult& res) {
   Serial.println();
 
   if (res.type == AsyncSD::RequestType::Info) {
-    printInfo(res.fsInfo, res.cardInfo);
+    printInfo(res.fsInfo, res.cardInfo, res.presenceInfo);
   }
 
   if (res.type == AsyncSD::RequestType::Stat && res.code == AsyncSD::ErrorCode::Ok) {
@@ -847,6 +955,7 @@ static void processLine(char* line) {
 void setup() {
   log_begin(115200);
   delay(100);
+  setupStatusLed();
 
   AsyncSD::SdCardConfig cfg;
   cfg.pinCs = pins::SD_CS;
@@ -862,11 +971,13 @@ void setup() {
     LOGE("AsyncSD begin failed");
   }
 
+  updateStatusLed();
   printHelp();
   Serial.println(F("Ready."));
 }
 
 void loop() {
+  updateStatusLed();
   g_sd.poll();
 
   AsyncSD::RequestResult res{};

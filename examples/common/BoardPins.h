@@ -31,9 +31,12 @@ static constexpr int SPI_MISO = 13;
 static constexpr int SD_CS = 10;
 
 /// @brief SD card CD (card-detect) pin. Set to -1 if not wired.
-static constexpr int SD_CD = -1;
+static constexpr int SD_CD = 21;
 
-/// @brief LED pin. Example default for ESP32-S3 (GPIO48).
-static constexpr int LED = 48;
+/// @brief LED pin. Example default for the current reference board.
+static constexpr int LED = 17;
+
+/// @brief LED polarity. Set false for active-low LED circuits.
+static constexpr bool LED_ACTIVE_HIGH = true;
 
 }  // namespace pins

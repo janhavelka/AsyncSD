@@ -255,6 +255,26 @@ struct CardInfo {
   bool sdsValid = false;
 };
 
+/// @brief Card-detect / presence snapshot.
+struct PresenceInfo {
+  /// @brief True if a CD pin is configured.
+  bool cdConfigured = false;
+
+  /// @brief True if the configured CD pin is active-low.
+  bool cdActiveLow = true;
+
+  /// @brief True if CD change sampling uses an interrupt flag.
+  bool cdInterruptEnabled = false;
+
+  /// @brief Latest raw CD pin electrical level (true = GPIO high).
+  /// @note Meaningful only when cdConfigured is true.
+  bool cdRawLevelHigh = false;
+
+  /// @brief Debounced logical card-present state derived from the CD pin.
+  /// @note Meaningful only when cdConfigured is true.
+  bool cardPresent = false;
+};
+
 /// @brief Worker health metrics snapshot.
 struct WorkerHealth {
   /// @brief Timestamp of last worker progress (millis).
@@ -319,6 +339,9 @@ struct RequestResult {
 
   /// @brief Card info snapshot (for info requests).
   CardInfo cardInfo{};
+
+  /// @brief Presence snapshot (for info requests and status-aware consumers).
+  PresenceInfo presenceInfo{};
 };
 
 /// @brief Result callback type (invoked in worker context).

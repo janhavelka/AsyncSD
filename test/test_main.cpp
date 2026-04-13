@@ -4,6 +4,9 @@
 void test_debounce();
 void test_backoff();
 void test_failure_hysteresis();
+void test_cd_presence_snapshot_initial_state();
+void test_cd_presence_snapshot_updates_after_debounce();
+void test_info_result_includes_presence_snapshot();
 void test_stall_detector();
 void test_shutdown_policy();
 void test_copy_write_pool();
@@ -37,6 +40,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_debounce);
   RUN_TEST(test_backoff);
   RUN_TEST(test_failure_hysteresis);
+  RUN_TEST(test_cd_presence_snapshot_initial_state);
+  RUN_TEST(test_cd_presence_snapshot_updates_after_debounce);
+  RUN_TEST(test_info_result_includes_presence_snapshot);
   RUN_TEST(test_stall_detector);
   RUN_TEST(test_shutdown_policy);
   RUN_TEST(test_copy_write_pool);

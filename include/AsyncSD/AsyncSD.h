@@ -154,6 +154,11 @@ class SdCardManager {
   CardInfo cardInfo() const;
 
   /**
+   * @brief Get card-detect / presence snapshot.
+   */
+  PresenceInfo presenceInfo() const;
+
+  /**
    * @brief Get count of dropped results due to result queue overflow.
    */
   uint32_t getDroppedResults() const;

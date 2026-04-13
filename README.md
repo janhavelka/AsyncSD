@@ -114,6 +114,7 @@ void loop() {
 
 **Error Handling**
 - `ErrorCode` + `ErrorInfo` returned via results and `lastErrorInfo()`
+- `PresenceInfo` exposes live CD-pin state via `presenceInfo()` when CD is configured
 - No silent failures
 
 **Worker Health**
@@ -172,23 +173,29 @@ See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
 - bytes requested / processed
 - timestamp (`millis`)
 
+**PresenceInfo**
+- CD configured / disabled
+- raw CD GPIO level
+- debounced logical card-present state
+
 ---
 
 ## Card + Filesystem Info
 
-Use `requestInfo()` to refresh card and filesystem details asynchronously:
+Use `requestInfo()` to refresh card, filesystem, and presence details asynchronously:
 
 ```cpp
 auto id = sd.requestInfo();
 AsyncSD::RequestResult res;
 if (sd.getResult(id, &res)) {
-  // res.fsInfo and res.cardInfo contain snapshots
+  // res.fsInfo, res.cardInfo, and res.presenceInfo contain snapshots
 }
 ```
 
-`cardInfo()` and `fsInfo()` return the latest snapshots, including:
+`cardInfo()`, `fsInfo()`, and `presenceInfo()` return the latest snapshots, including:
 - Card type, OCR, CID/CSD/SCR/SDS raw registers
 - Filesystem capacity, used/free bytes, cluster geometry
+- CD configuration, raw pin level, and debounced logical presence
 
 ---
 
@@ -198,6 +205,8 @@ if (sd.getResult(id, &res)) {
 - Debounced input
 - Optional interrupt (ISR sets flag only)
 - Set `cdPin = -1` to disable CD support
+- `presenceInfo()` reports whether CD is configured, the raw GPIO level, and the debounced
+  logical card-present state used by the worker
 
 **Without CD pin**
 - Probe-based detection with exponential backoff
@@ -262,7 +271,7 @@ and must not call back into AsyncSD APIs or `end()` to avoid deadlocks/UAF.
 
 | Example                | Description                                |
 | ---------------------- | ------------------------------------------ |
-| `01_spi_cli_control`   | Interactive CLI to exercise the full API   |
+| `01_spi_cli_control`   | Interactive CLI with live status LED and CD reporting |
 
 ---
 

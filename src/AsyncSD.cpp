@@ -141,6 +141,7 @@ struct Internal {
   ErrorInfo lastErrorInfo{};
   FsInfo fsInfo{};
   CardInfo cardInfo{};
+  PresenceInfo presenceInfo{};
   HealthState health{};
   SdCardConfig runtimeConfig{};
 
@@ -476,6 +477,28 @@ static void setCardInfo(Internal* st, const CardInfo& info) {
   portEXIT_CRITICAL(&st->stateMux);
 }
 
+static void setPresenceInfo(Internal* st, const PresenceInfo& info) {
+  if (!st) {
+    return;
+  }
+  portENTER_CRITICAL(&st->stateMux);
+  st->presenceInfo = info;
+  portEXIT_CRITICAL(&st->stateMux);
+}
+
+static void syncPresenceInfoFromCd(Internal* st, bool rawLevelHigh) {
+  if (!st) {
+    return;
+  }
+  PresenceInfo info{};
+  info.cdConfigured = st->cdEnabled;
+  info.cdActiveLow = st->runtimeConfig.cdActiveLow;
+  info.cdInterruptEnabled = st->cdEnabled && st->cdInterruptEnabled;
+  info.cdRawLevelHigh = rawLevelHigh;
+  info.cardPresent = st->cardPresent;
+  setPresenceInfo(st, info);
+}
+
 static void setLastError(Internal* st, ErrorCode code, Operation op, int32_t detail,
                          const char* path, uint32_t bytesReq, uint32_t bytesDone) {
   if (!st) {
@@ -721,6 +744,7 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   _internal->lastErrorInfo = ErrorInfo{};
   _internal->fsInfo = FsInfo{};
   _internal->cardInfo = CardInfo{};
+  _internal->presenceInfo = PresenceInfo{};
   _internal->mounted = false;
   _internal->workerRunning.store(false, std::memory_order_relaxed);
   _internal->stopWorker.store(false, std::memory_order_relaxed);
@@ -867,6 +891,9 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
       _internal->cdInterruptEnabled = true;
       attachInterruptArg(static_cast<uint8_t>(_config.cdPin), cdIsr, _internal, CHANGE);
     }
+    syncPresenceInfoFromCd(_internal, raw);
+  } else {
+    setPresenceInfo(_internal, PresenceInfo{});
   }
 
   // No-CD backoff defaults
@@ -1047,6 +1074,7 @@ void SdCardManager::end() {
   setStatus(_internal, SdStatus::Disabled);
   setFsInfo(_internal, FsInfo{});
   setCardInfo(_internal, CardInfo{});
+  setPresenceInfo(_internal, PresenceInfo{});
   _internal->health.stallActive.store(false, std::memory_order_relaxed);
   _internal->health.queueDepthRequests.store(0, std::memory_order_relaxed);
   _internal->health.queueDepthResults.store(0, std::memory_order_relaxed);
@@ -1142,6 +1170,17 @@ CardInfo SdCardManager::cardInfo() const {
   }
   portENTER_CRITICAL(&_internal->stateMux);
   info = _internal->cardInfo;
+  portEXIT_CRITICAL(&_internal->stateMux);
+  return info;
+}
+
+PresenceInfo SdCardManager::presenceInfo() const {
+  PresenceInfo info{};
+  if (!_internal) {
+    return info;
+  }
+  portENTER_CRITICAL(&_internal->stateMux);
+  info = _internal->presenceInfo;
   portEXIT_CRITICAL(&_internal->stateMux);
   return info;
 }
@@ -1578,6 +1617,7 @@ static void enqueueResult(Internal* st, const SdCardConfig& cfg, const Request& 
   portENTER_CRITICAL(&st->stateMux);
   result.fsInfo = st->fsInfo;
   result.cardInfo = st->cardInfo;
+  result.presenceInfo = st->presenceInfo;
   portEXIT_CRITICAL(&st->stateMux);
 
   if (cfg.enableWorkerCallbacks) {
@@ -1932,9 +1972,11 @@ static void updateCdPresence(Internal* st, const SdCardConfig& cfg, uint32_t now
   st->lastCdPollMs = nowMs;
   const bool raw = digitalRead(static_cast<uint8_t>(cfg.cdPin)) != 0;
   const bool sampleNow = cfg.cdActiveLow ? !raw : raw;
+  syncPresenceInfoFromCd(st, raw);
 
   if (st->cdDebounce.update(sampleNow, nowMs)) {
     st->cardPresent = st->cdDebounce.stable;
+    syncPresenceInfoFromCd(st, raw);
     setStatus(st, st->cardPresent ? SdStatus::CardInserted : SdStatus::NoCard);
     if (!st->cardPresent) {
       if (st->mounted) {

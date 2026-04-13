@@ -8,10 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet
+- Added public `PresenceInfo` snapshots via `presenceInfo()` and `RequestResult::presenceInfo` so applications can read debounced CD-pin state without bypassing AsyncSD presence logic
 
 ### Changed
-- Nothing yet
+- Improved `examples/01_spi_cli_control` with a nonblocking status LED that reflects mount progress and ready/error states
+- Extended the CLI `status` and `info` output to report CD pin configuration, raw level, and debounced logical presence when CD is configured
 
 ### Fixed
 - Nothing yet
