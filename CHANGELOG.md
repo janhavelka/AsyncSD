@@ -9,10 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added public `PresenceInfo` snapshots via `presenceInfo()` and `RequestResult::presenceInfo` so applications can read debounced CD-pin state without bypassing AsyncSD presence logic
+- Doxygen configuration for generated API documentation.
+- README instructions for local API documentation generation.
+- `ErrorCode`/`SdStatus` helper aliases plus `RequestResult::ok()` and
+  `ErrorInfo::ok()` convenience accessors.
+- CLI `version` and `config` diagnostics for build metadata and runtime settings.
 
 ### Changed
 - Improved `examples/01_spi_cli_control` with a nonblocking status LED that reflects mount progress and ready/error states
 - Extended the CLI `status` and `info` output to report CD pin configuration, raw level, and debounced logical presence when CD is configured
+- Repository/homepage metadata and changelog compare links now point at the
+  maintained GitHub repository instead of placeholder URLs.
 
 ### Fixed
 - Nothing yet
@@ -131,11 +138,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Compile-only examples
 
-[Unreleased]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.3.0...HEAD
-[1.3.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.2.1...v1.3.0
-[1.2.1]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.2...v1.2.0
-[1.1.2]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/YOUR_USERNAME/AsyncSD/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/YOUR_USERNAME/AsyncSD/releases/tag/v1.0.0
+[Unreleased]: https://github.com/janhavelka/AsyncSD/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/janhavelka/AsyncSD/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/janhavelka/AsyncSD/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/janhavelka/AsyncSD/compare/v1.1.2...v1.2.0
+[1.1.2]: https://github.com/janhavelka/AsyncSD/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/janhavelka/AsyncSD/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/janhavelka/AsyncSD/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/janhavelka/AsyncSD/releases/tag/v1.0.0
