@@ -66,6 +66,19 @@ enum class ErrorCode : uint16_t {
   AlreadyExists
 };
 
+/// @brief Check whether an ErrorCode represents success.
+/// @param code Error code to inspect.
+/// @return true when code is ErrorCode::Ok.
+constexpr bool ok(ErrorCode code) { return code == ErrorCode::Ok; }
+
+/// @brief Check whether a high-level SD status is actively progressing.
+/// @param status Status value to inspect.
+/// @return true for Initializing, Mounting, or Busy.
+constexpr bool inProgress(SdStatus status) {
+  return status == SdStatus::Initializing || status == SdStatus::Mounting ||
+         status == SdStatus::Busy;
+}
+
 /// @brief Operation enum for structured error reporting.
 enum class Operation : uint8_t {
   None = 0,
@@ -141,6 +154,10 @@ struct DirEntry {
 struct ErrorInfo {
   /// @brief Error code.
   ErrorCode code = ErrorCode::Ok;
+
+  /// @brief Check whether this snapshot reports success.
+  /// @return true when code is ErrorCode::Ok.
+  constexpr bool ok() const { return code == ErrorCode::Ok; }
 
   /// @brief Operation that failed.
   Operation op = Operation::None;
@@ -315,6 +332,10 @@ struct RequestResult {
 
   /// @brief Result code.
   ErrorCode code = ErrorCode::Ok;
+
+  /// @brief Check whether the request completed successfully.
+  /// @return true when code is ErrorCode::Ok.
+  constexpr bool ok() const { return code == ErrorCode::Ok; }
 
   /// @brief Raw underlying error detail, if available.
   int32_t detail = 0;

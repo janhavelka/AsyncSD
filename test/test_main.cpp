@@ -28,6 +28,7 @@ void test_result_queue_getresult_no_overwrite();
 void test_result_queue_pop_after_get();
 void test_request_id_correctness();
 void test_listdir_bounded();
+void test_status_helpers();
 
 void setUp() {}
 void tearDown() {}
@@ -64,5 +65,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_result_queue_pop_after_get);
   RUN_TEST(test_request_id_correctness);
   RUN_TEST(test_listdir_bounded);
+  RUN_TEST(test_status_helpers);
   return UNITY_END();
 }
