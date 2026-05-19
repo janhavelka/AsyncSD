@@ -7,16 +7,65 @@
 
 #include <stdint.h>
 
+#if defined(ARDUINO)
 #include <SPI.h>
+#else
+class SPIClass;
+#endif
 
 #include "AsyncSD/Status.h"
 
 namespace AsyncSD {
 
+/// @brief Backend implementation selected at compile/runtime boundary.
+enum class Backend : uint8_t {
+  /// @brief Arduino + SdFat v2 backend. This is the current production backend.
+  ARDUINO_SDFAT = 0,
+
+  /// @brief ESP-IDF VFS/POSIX backend. Contract is public; implementation is pending.
+  IDF_VFS
+};
+
 /// @brief Transport selection for SD access.
 enum class TransportType : uint8_t {
   Spi = 0,
   Sdmmc
+};
+
+/**
+ * @brief ESP-IDF VFS adapter callbacks.
+ *
+ * The IDF backend does not own SDMMC/SDSPI host setup, GPIO, or FatFS mounting.
+ * Applications provide an already configured VFS mount point and optional
+ * bounded lock/mount/status callbacks.
+ */
+struct IdfVfsAdapter {
+  /// @brief Mounted VFS path, for example "/sdcard".
+  const char* mountPoint = "/sdcard";
+
+  /// @brief Opaque application context passed to callbacks.
+  void* user = nullptr;
+
+  /// @brief Optional callback returning whether the VFS path is mounted.
+  bool (*isMounted)(void* user) = nullptr;
+
+  /// @brief Optional callback returning card presence when known.
+  bool (*isPresent)(void* user) = nullptr;
+
+  /// @brief Optional monotonic millisecond clock callback.
+  uint32_t (*nowMs)(void* user) = nullptr;
+
+  /// @brief Optional bounded lock callback for shared VFS/card access.
+  ErrorCode (*lock)(uint32_t timeoutMs, void* user) = nullptr;
+
+  /// @brief Optional unlock callback paired with lock().
+  void (*unlock)(void* user) = nullptr;
+
+  /// @brief Optional bounded application-owned mount callback.
+  ErrorCode (*mount)(uint32_t timeoutMs, void* user) = nullptr;
+
+  /// @brief Optional bounded application-owned unmount callback.
+  ErrorCode (*unmount)(uint32_t timeoutMs, void* user) = nullptr;
 };
 
 /**
@@ -30,6 +79,13 @@ struct SdCardConfig {
   // Transport
   // ---------------------------
 
+  /// @brief Backend implementation. Arduino builds default to SdFat; pure IDF defaults to VFS.
+#if defined(ESP_PLATFORM) && !defined(ARDUINO)
+  Backend backend = Backend::IDF_VFS;
+#else
+  Backend backend = Backend::ARDUINO_SDFAT;
+#endif
+
   /// @brief Transport type (SPI now, SDMMC reserved for ESP32-S3).
   TransportType transport = TransportType::Spi;
 
@@ -37,12 +93,19 @@ struct SdCardConfig {
   /// @note Used to strip prefix if present. Defaults to "/sd".
   const char* mountPoint = "/sd";
 
+  /// @brief ESP-IDF VFS adapter. Used only when backend == Backend::IDF_VFS.
+  IdfVfsAdapter idfVfs{};
+
   // ---------------------------
   // SPI configuration
   // ---------------------------
 
   /// @brief SPI bus instance (default: &SPI).
+#if defined(ARDUINO)
   SPIClass* spi = &SPI;
+#else
+  SPIClass* spi = nullptr;
+#endif
 
   /// @brief SPI chip select pin (required for SPI transport).
   /// @note Set to -1 to disable SPI transport.
@@ -64,7 +127,11 @@ struct SdCardConfig {
   uint32_t spiFrequencyHz = 25000000;
 
   /// @brief SPI mode (0-3). Default SPI_MODE0.
+#if defined(SPI_MODE0)
   uint8_t spiMode = SPI_MODE0;
+#else
+  uint8_t spiMode = 0;
+#endif
 
   /// @brief True to configure SdFat for shared SPI (recommended).
   bool spiShared = true;

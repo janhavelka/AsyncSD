@@ -31,6 +31,21 @@ pio device monitor -e spi_cli_esp32s3
 
 **Note:** SDMMC transport is a stub (returns `Unsupported`) and reserved for future ESP32-S3 support.
 
+## ESP-IDF Port Status
+
+AsyncSD now exposes an ESP-IDF-safe public configuration surface:
+
+- `SdCardConfig` no longer requires Arduino `SPI.h` in pure ESP-IDF builds.
+- `Backend::IDF_VFS` and `IdfVfsAdapter` define the intended app-owned VFS contract.
+- Root `CMakeLists.txt` and `idf_component.yml` are present for ESP-IDF component discovery.
+
+The ESP-IDF VFS backend is not implemented yet. In pure ESP-IDF builds,
+`SdCardManager::begin()` returns `false` with `ErrorCode::Unsupported`. The
+Arduino SdFat backend remains the production backend.
+
+See `docs/IDF_PORT.md` and `docs/IDF_PORT_IMPLEMENTATION.md` for the port plan,
+implemented prep work, and remaining blockers.
+
 ## Dependency
 
 AsyncSD depends on **SdFat v2**. PlatformIO installs it automatically via `library.json` / `platformio.ini`.

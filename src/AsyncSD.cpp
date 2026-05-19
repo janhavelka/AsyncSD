@@ -5,7 +5,211 @@
 
 #include "AsyncSD/AsyncSD.h"
 
+#if defined(ESP_PLATFORM) && !defined(ARDUINO)
+
+#include <new>
+
+namespace AsyncSD {
+
+struct Internal {
+  SdStatus status = SdStatus::Disabled;
+  ErrorCode lastError = ErrorCode::Ok;
+  ErrorInfo lastErrorInfo{};
+  WorkerHealth health{};
+  FsInfo fsInfo{};
+  CardInfo cardInfo{};
+  PresenceInfo presenceInfo{};
+  uint32_t droppedResults = 0;
+  bool initialized = false;
+};
+
+static uint32_t adapterNowMs(const SdCardConfig& cfg) {
+  if (cfg.idfVfs.nowMs) {
+    return cfg.idfVfs.nowMs(cfg.idfVfs.user);
+  }
+  return 0;
+}
+
+static void setUnsupported(Internal* st, const SdCardConfig& cfg, Operation op) {
+  if (!st) {
+    return;
+  }
+  const uint32_t nowMs = adapterNowMs(cfg);
+  st->lastError = ErrorCode::Unsupported;
+  st->lastErrorInfo.code = ErrorCode::Unsupported;
+  st->lastErrorInfo.op = op;
+  st->lastErrorInfo.detail = 0;
+  st->lastErrorInfo.timestampMs = nowMs;
+  st->lastErrorInfo.bytesRequested = 0;
+  st->lastErrorInfo.bytesProcessed = 0;
+  st->lastErrorInfo.path = nullptr;
+  st->health.lastErrorMs = nowMs;
+  st->health.lastErrorCode = ErrorCode::Unsupported;
+  st->health.currentStatus = SdStatus::Fault;
+  st->status = SdStatus::Fault;
+}
+
+SdCardManager::SdCardManager() { _internal = new (std::nothrow) Internal(); }
+
+SdCardManager::~SdCardManager() {
+  end();
+  delete _internal;
+  _internal = nullptr;
+}
+
+bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* /*guard*/) {
+  if (!_internal) {
+    return false;
+  }
+  _config = config;
+  _internal->initialized = false;
+  setUnsupported(_internal, _config, Operation::Begin);
+  return false;
+}
+
+void SdCardManager::end() {
+  if (!_internal) {
+    return;
+  }
+  _internal->initialized = false;
+  _internal->status = SdStatus::Disabled;
+  _internal->health.currentStatus = SdStatus::Disabled;
+}
+
+void SdCardManager::workerStep(uint32_t /*budgetUs*/) {}
+
+void SdCardManager::poll() {}
+
+SdStatus SdCardManager::status() const {
+  return _internal ? _internal->status : SdStatus::Disabled;
+}
+
+ErrorCode SdCardManager::lastError() const {
+  return _internal ? _internal->lastError : ErrorCode::NotInitialized;
+}
+
+ErrorInfo SdCardManager::lastErrorInfo() const {
+  return _internal ? _internal->lastErrorInfo : ErrorInfo{};
+}
+
+WorkerHealth SdCardManager::getWorkerHealth() const {
+  return _internal ? _internal->health : WorkerHealth{};
+}
+
+FsInfo SdCardManager::fsInfo() const {
+  return _internal ? _internal->fsInfo : FsInfo{};
+}
+
+CardInfo SdCardManager::cardInfo() const {
+  return _internal ? _internal->cardInfo : CardInfo{};
+}
+
+PresenceInfo SdCardManager::presenceInfo() const {
+  return _internal ? _internal->presenceInfo : PresenceInfo{};
+}
+
+uint32_t SdCardManager::getDroppedResults() const {
+  return _internal ? _internal->droppedResults : 0;
+}
+
+bool SdCardManager::isReady() const { return false; }
+
+RequestId SdCardManager::requestMount(ResultCallback /*cb*/, void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Mount);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestUnmount(ResultCallback /*cb*/, void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Unmount);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestInfo(ResultCallback /*cb*/, void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Info);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestOpen(const char* /*path*/, OpenMode /*mode*/,
+                                     ResultCallback /*cb*/, void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Open);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestClose(FileHandle /*handle*/, ResultCallback /*cb*/,
+                                      void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Close);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestRead(FileHandle /*handle*/, uint64_t /*offset*/,
+                                     void* /*dst*/, size_t /*len*/,
+                                     ResultCallback /*cb*/, void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Read);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestWrite(FileHandle /*handle*/, uint64_t /*offset*/,
+                                      const void* /*src*/, size_t /*len*/,
+                                      ResultCallback /*cb*/, void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Write);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestWriteCopy(FileHandle /*handle*/, uint64_t /*offset*/,
+                                          const void* /*src*/, size_t /*len*/,
+                                          ResultCallback /*cb*/, void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Write);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestSync(FileHandle /*handle*/, ResultCallback /*cb*/,
+                                     void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Sync);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestMkdir(const char* /*path*/, ResultCallback /*cb*/,
+                                      void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Mkdir);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestRemove(const char* /*path*/, ResultCallback /*cb*/,
+                                       void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Remove);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestRename(const char* /*fromPath*/, const char* /*toPath*/,
+                                       RenameMode /*mode*/, ResultCallback /*cb*/,
+                                       void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Rename);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestStat(const char* /*path*/, ResultCallback /*cb*/,
+                                     void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::Stat);
+  return INVALID_REQUEST_ID;
+}
+
+RequestId SdCardManager::requestListDir(const char* /*path*/, DirEntry* /*entries*/,
+                                        uint16_t /*maxEntries*/, ResultCallback /*cb*/,
+                                        void* /*user*/) {
+  setUnsupported(_internal, _config, Operation::ListDir);
+  return INVALID_REQUEST_ID;
+}
+
+bool SdCardManager::getResult(RequestId /*id*/, RequestResult* /*out*/) { return false; }
+
+bool SdCardManager::popResult(RequestResult* /*out*/) { return false; }
+
+}  // namespace AsyncSD
+
+#else
+
 #include <Arduino.h>
+#include <SPI.h>
 #include <SdFat.h>
 #include <atomic>
 #include <errno.h>
@@ -694,6 +898,12 @@ bool SdCardManager::begin(const SdCardConfig& config, ISpiBusGuard* guard) {
   }
   if (validated.probeBackoffMaxMs < validated.probeBackoffMinMs) {
     validated.probeBackoffMaxMs = validated.probeBackoffMinMs;
+  }
+
+  if (validated.backend != Backend::ARDUINO_SDFAT) {
+    setLastError(_internal, ErrorCode::Unsupported, Operation::Begin, 0, nullptr, 0, 0);
+    setStatus(_internal, SdStatus::Fault);
+    return false;
   }
 
   // Basic validation
@@ -2735,3 +2945,5 @@ void SdCardManager::workerStep(uint32_t budgetUs) {
 }
 
 }  // namespace AsyncSD
+
+#endif

@@ -10,33 +10,39 @@ is Arduino/SdFat-only.
 
 ## Current State
 
-- The library is Arduino-only. `include/AsyncSD/Config.h` includes `<SPI.h>` and
-  exposes `SPIClass*` in `SdCardConfig`.
+- Public headers now include in pure ESP-IDF builds. `include/AsyncSD/Config.h`
+  only includes Arduino `SPI.h` when `ARDUINO` is defined and otherwise forward
+  declares `SPIClass`.
+- `SdCardConfig` exposes `Backend::ARDUINO_SDFAT`, `Backend::IDF_VFS`, and an
+  `IdfVfsAdapter` callback contract for app-owned VFS mounting.
 - `src/AsyncSD.cpp` depends on Arduino APIs (`millis`, `micros`, GPIO helpers,
-  `SPIClass`) and SdFat v2 types (`SdFs`, `FsFile`, `SdSpiConfig`, card APIs).
+  `SPIClass`) and SdFat v2 types (`SdFs`, `FsFile`, `SdSpiConfig`, card APIs)
+  for the production Arduino/backend path.
+- Pure ESP-IDF builds compile an explicit unsupported stub path; the VFS/POSIX
+  backend is not implemented yet.
 - The public model is already close to IDF expectations: `SdCardManager` owns a
   bounded request queue, can run from a worker task or external `workerStep`,
   and reports structured request results.
 - `TransportType::Sdmmc` exists but is a stub; SPI/SdFat is the only working
   backend.
 - Examples are Arduino sketches under `examples/01_spi_cli_control` with
-  board-specific pins isolated in `examples/common/BoardPins.h`.
-- `platformio.ini` and `library.json` declare Arduino framework usage and SdFat
-  dependency only.
+  board-specific pins isolated in `examples/common/BoardPins.h`; an
+  `examples/idf_vfs_contract` scaffold documents the IDF contract.
+- `platformio.ini` and `library.json` still declare Arduino framework usage and
+  SdFat dependency only. ESP-IDF component metadata is available through root
+  `CMakeLists.txt` and `idf_component.yml`.
 
 ## Blockers
 
-1. Public headers are not ESP-IDF compilable because of the unconditional
-   Arduino `SPI.h` include and `SPIClass*` field.
-2. The implementation is tightly coupled to SdFat file/card objects; ESP-IDF
+1. The implementation is tightly coupled to SdFat file/card objects; ESP-IDF
    should use VFS/POSIX over FatFS rather than porting SdFat.
-3. Mount ownership must be defined. The library rules say AsyncSD must not own
+2. Mount ownership must be defined. The library rules say AsyncSD must not own
    the SPI bus; IDF SDMMC/SDSPI host setup must stay in the application or in an
    injected adapter.
-4. Card info, filesystem info, and presence reporting currently come from SdFat
+3. Card info, filesystem info, and presence reporting currently come from SdFat
    and Arduino GPIO. These need IDF-specific adapters or graceful "unknown"
    fields.
-5. The SDMMC backend is a placeholder and must not be advertised as ready until
+4. The SDMMC backend is a placeholder and must not be advertised as ready until
    there is a real IDF VFS/FatFS path.
 
 ## Exact Files/APIs To Change
@@ -218,13 +224,18 @@ AsyncSD.
 ## Ordered Checklist
 
 1. Add `docs/IDF_PORT.md` acceptance criteria to the implementation issue.
-2. Guard Arduino-only public includes and fields in `Config.h`.
-3. Introduce the IDF VFS backend type without changing existing Arduino defaults.
+2. Guard Arduino-only public includes and fields in `Config.h`. Done in the
+   IDF prep branch.
+3. Introduce the IDF VFS backend type without changing existing Arduino
+   defaults. Done in the IDF prep branch.
 4. Split `src/AsyncSD.cpp` into common request handling plus backend operations.
 5. Implement VFS/POSIX file operations and map `errno` to `SdStatus`.
-6. Add optional mounted/present/lock/time callbacks for IDF.
-7. Add component `CMakeLists.txt` and `idf_component.yml`.
-8. Add IDF SDSPI and SDMMC examples that own host setup and FatFS mount.
+6. Add optional mounted/present/lock/time callbacks for IDF. Contract added;
+   backend usage pending.
+7. Add component `CMakeLists.txt` and `idf_component.yml`. Done in the IDF prep
+   branch.
+8. Add IDF SDSPI and SDMMC examples that own host setup and FatFS mount. Pending;
+   only a contract scaffold exists.
 9. Add native fake-backend tests and IDF compile tests.
 10. Run Arduino PlatformIO examples/tests to prove existing behavior was not
     broken.

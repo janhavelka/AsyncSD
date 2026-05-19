@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- ESP-IDF component metadata (`CMakeLists.txt`, `idf_component.yml`) for the
+  first IDF port-prep path.
+- Public `Backend::IDF_VFS` and `IdfVfsAdapter` contract for application-owned
+  ESP-IDF VFS/FatFS mounting.
+- ESP-IDF VFS contract example documenting the current unsupported runtime path.
 - Added public `PresenceInfo` snapshots via `presenceInfo()` and `RequestResult::presenceInfo` so applications can read debounced CD-pin state without bypassing AsyncSD presence logic
 - Doxygen configuration for generated API documentation.
 - README instructions for local API documentation generation.
@@ -16,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI `version` and `config` diagnostics for build metadata and runtime settings.
 
 ### Changed
+- `SdCardConfig` no longer unconditionally includes Arduino `SPI.h`; pure
+  ESP-IDF builds see a forward-declared `SPIClass*` and default to the VFS
+  backend contract.
 - Improved `examples/01_spi_cli_control` with a nonblocking status LED that reflects mount progress and ready/error states
 - Extended the CLI `status` and `info` output to report CD pin configuration, raw level, and debounced logical presence when CD is configured
 - Repository/homepage metadata and changelog compare links now point at the
