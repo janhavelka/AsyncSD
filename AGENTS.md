@@ -72,6 +72,14 @@ AGENTS.md             - This file
 - If no guard is provided, use an internal mutex guard (still bounded)
 - Do not hold the bus longer than a single bounded operation
 
+### 5a) Framework Boundary and Native IDF Examples
+- Public headers must stay includable in pure ESP-IDF builds. Arduino-only includes/types must be guarded, forward-declared, or isolated to the Arduino SdFat backend.
+- The Arduino SdFat backend is the production path today. The IDF VFS backend is a public contract only until POSIX/VFS file operations are implemented.
+- AsyncSD must not own SPI/SDSPI/SDMMC host setup, GPIO card-detect setup, or FatFS mount policy in core code. Those resources belong to the application or an injected adapter.
+- ESP-IDF examples must use native IDF APIs (`app_main`, `esp_timer`, FreeRTOS, ESP logging, fixed C buffers or native console APIs). Do not use Arduino compatibility facades in IDF examples.
+- Preserve or document Arduino/IDF CLI parity. Contract-only IDF examples must state that Arduino file-I/O CLI parity is intentionally blocked by the missing VFS backend.
+- Update `scripts/check_idf_example_contract.py` whenever an IDF example is added or its ownership contract changes.
+
 ### 6) SdFat v2 with FAT32 + exFAT
 - Use **SdFat v2** with `SdFs` + `FsFile` to support FAT32 + exFAT
 - Detect/report filesystem type and capacity where feasible

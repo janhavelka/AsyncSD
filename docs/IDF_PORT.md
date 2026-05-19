@@ -194,6 +194,8 @@ AsyncSD.
   path normalization, mount-state behavior, errno mapping, and request ordering.
 - IDF build test: compile the component for ESP32-S2 and ESP32-S3 with
   `ESP_PLATFORM` and no Arduino headers available.
+- IDF contract example check:
+  `python scripts/check_idf_example_contract.py`.
 - IDF fake VFS test: use a host or target test adapter that maps operations to a
   temp directory and injects `errno` failures.
 - Hardware tests: SDSPI mount/read/write/list/remove and SDMMC mount/read/write

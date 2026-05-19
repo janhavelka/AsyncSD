@@ -38,6 +38,8 @@ AsyncSD now exposes an ESP-IDF-safe public configuration surface:
 - `SdCardConfig` no longer requires Arduino `SPI.h` in pure ESP-IDF builds.
 - `Backend::IDF_VFS` and `IdfVfsAdapter` define the intended app-owned VFS contract.
 - Root `CMakeLists.txt` and `idf_component.yml` are present for ESP-IDF component discovery.
+- `examples/idf_vfs_contract` is a native IDF contract example using
+  `app_main`, `esp_timer`, and ESP logging; it does not use Arduino facades.
 
 The ESP-IDF VFS backend is not implemented yet. In pure ESP-IDF builds,
 `SdCardManager::begin()` returns `false` with `ErrorCode::Unsupported`. The
@@ -304,6 +306,7 @@ Host-only tests (debounce/backoff logic, rename flows, and robustness helpers):
 
 ```bash
 pio test -e native_test
+python scripts/check_idf_example_contract.py
 ```
 
 ---

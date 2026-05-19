@@ -15,6 +15,8 @@ Date: 2026-05-19
 - Added root ESP-IDF component metadata.
 - Added `examples/idf_vfs_contract` to demonstrate the current IDF contract and
   unsupported runtime behavior.
+- Added `scripts/check_idf_example_contract.py` to statically verify that the
+  IDF contract example uses native IDF APIs and no Arduino compatibility facade.
 
 ## Current Runtime Matrix
 

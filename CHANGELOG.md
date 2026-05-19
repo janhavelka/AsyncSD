@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public `Backend::IDF_VFS` and `IdfVfsAdapter` contract for application-owned
   ESP-IDF VFS/FatFS mounting.
 - ESP-IDF VFS contract example documenting the current unsupported runtime path.
+- `scripts/check_idf_example_contract.py` to guard the native IDF VFS contract
+  example against Arduino compatibility facades and missing component metadata.
 - Added public `PresenceInfo` snapshots via `presenceInfo()` and `RequestResult::presenceInfo` so applications can read debounced CD-pin state without bypassing AsyncSD presence logic
 - Doxygen configuration for generated API documentation.
 - README instructions for local API documentation generation.
