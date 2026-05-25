@@ -342,6 +342,27 @@ struct RequestResult {
 
   /// @brief Presence snapshot (for info requests and status-aware consumers).
   PresenceInfo presenceInfo{};
+
+  /// @brief Worker-side request runtime in microseconds.
+  uint32_t durationUs = 0;
+
+  /// @brief Time spent queued before completion.
+  uint32_t queueWaitMs = 0;
+
+  /// @brief Request queue depth immediately after enqueue.
+  uint8_t requestQueueDepthAtEnqueue = 0;
+
+  /// @brief Request queue depth after this request completed.
+  uint8_t requestQueueDepthAfterComplete = 0;
+
+  /// @brief Result queue depth after this result was stored.
+  uint8_t resultQueueDepthAfterComplete = 0;
+
+  /// @brief Backend status snapshot when the result was produced.
+  SdStatus backendStatus = SdStatus::Disabled;
+
+  /// @brief True only for synchronous completions; worker results are async.
+  bool synchronous = false;
 };
 
 /// @brief Result callback type (invoked in worker context).

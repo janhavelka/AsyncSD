@@ -205,6 +205,17 @@ class SdCardManager {
   RequestId requestInfo(ResultCallback cb = nullptr, void* user = nullptr);
 
   /**
+   * @brief Enqueue a card/filesystem info refresh request.
+   * @param includeUsage True to include used/free byte scan.
+   * @param cb Optional callback invoked on completion (worker context).
+   * @param user User context pointer passed to callback.
+   * @return RequestId or INVALID_REQUEST_ID if enqueue failed.
+   * @note Nonblocking. Usage scans can be slow on FAT filesystems.
+   */
+  RequestId requestInfo(bool includeUsage, ResultCallback cb = nullptr,
+                        void* user = nullptr);
+
+  /**
    * @brief Enqueue an open request.
    * @param path File path (may include mountPoint prefix).
    * @param mode OpenMode flags.

@@ -192,6 +192,11 @@ if (sd.getResult(id, &res)) {
 }
 ```
 
+Use `requestInfo(false)` when a caller only needs card, filesystem type, capacity, and
+presence metadata. This skips the FAT used/free scan, which can be slow on large FAT
+volumes. Schedule `requestInfo(true)` at a bounded cadence when used/free bytes are
+needed.
+
 `cardInfo()`, `fsInfo()`, and `presenceInfo()` return the latest snapshots, including:
 - Card type, OCR, CID/CSD/SCR/SDS raw registers
 - Filesystem capacity, used/free bytes, cluster geometry
@@ -260,6 +265,11 @@ destination behavior: `RenameMode::FailIfExists` or `RenameMode::ReplaceIfExists
 
 **Result overflow telemetry:** If the result queue overflows, `getDroppedResults()` increments and
 `lastErrorInfo()` reports `ResultEnqueue` with `ErrorCode::Busy`.
+
+**Result timing telemetry:** Each `RequestResult` includes worker-side `durationUs`,
+`queueWaitMs`, request/result queue depths, backend status, and whether the completion came from
+an asynchronous worker path. Applications can use these fields to attribute long SD operations
+without blocking their cooperative tick.
 
 **Worker callbacks (disabled by default):** Set `SdCardConfig::enableWorkerCallbacks = true` to
 allow worker-context callbacks (`req.callback` or `onResult`). Callbacks must be fast, nonblocking,

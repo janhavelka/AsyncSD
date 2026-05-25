@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added public `PresenceInfo` snapshots via `presenceInfo()` and `RequestResult::presenceInfo` so applications can read debounced CD-pin state without bypassing AsyncSD presence logic
+- Added `requestInfo(bool includeUsage, ...)` so applications can refresh card/capacity metadata without running the potentially slow FAT used/free scan on every status refresh
+- Added worker-side request timing and queue metadata to `RequestResult` for downstream slow-operation attribution
 
 ### Changed
 - Improved `examples/01_spi_cli_control` with a nonblocking status LED that reflects mount progress and ready/error states
