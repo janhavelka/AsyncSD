@@ -113,27 +113,33 @@ class SdCardManager {
   /**
    * @brief Worker step for externally-driven operation.
    * @param budgetUs Max time budget for this step (microseconds).
+   * @note Returns immediately if the manager is not initialized or a library
+   * worker task owns processing.
    * @note Use when useWorkerTask=false.
    */
   void workerStep(uint32_t budgetUs);
 
   /**
    * @brief Optional poll hook (lightweight). No-op when worker task is running.
+   * @note Call from the same task that owns the public API.
    */
   void poll();
 
   /**
    * @brief Get current status.
+   * @return Snapshot of the manager/card state.
    */
   SdStatus status() const;
 
   /**
    * @brief Get last error code.
+   * @return Last recorded error code, or ErrorCode::Ok when no error is recorded.
    */
   ErrorCode lastError() const;
 
   /**
    * @brief Get structured error info snapshot.
+   * @return Last error details. Any path pointer is valid until the next error update.
    */
   ErrorInfo lastErrorInfo() const;
 
@@ -145,11 +151,13 @@ class SdCardManager {
 
   /**
    * @brief Get filesystem info snapshot.
+   * @return Cached filesystem information from the latest successful info refresh.
    */
   FsInfo fsInfo() const;
 
   /**
    * @brief Get card info snapshot.
+   * @return Cached card information from the latest successful info refresh.
    */
   CardInfo cardInfo() const;
 
@@ -160,16 +168,19 @@ class SdCardManager {
 
   /**
    * @brief Get count of dropped results due to result queue overflow.
+   * @return Monotonic count of completed results that could not be queued.
    */
   uint32_t getDroppedResults() const;
 
   /**
    * @brief Check if filesystem is mounted and ready.
+   * @return true when requests that require a mounted filesystem may be enqueued.
    */
   bool isReady() const;
 
   /**
    * @brief Get active configuration.
+   * @return Validated runtime configuration captured by begin().
    */
   const SdCardConfig& config() const { return _config; }
 

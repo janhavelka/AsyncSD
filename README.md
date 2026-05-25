@@ -178,6 +178,11 @@ See `include/AsyncSD/Config.h` for full field list and Doxygen notes.
 - raw CD GPIO level
 - debounced logical card-present state
 
+Helper APIs:
+- `AsyncSD::ok(ErrorCode)` and `RequestResult::ok()` check success
+- `AsyncSD::inProgress(SdStatus)` is true for `Initializing`, `Mounting`, and `Busy`
+- `AsyncSD::Ok()` / `AsyncSD::Error(code)` are direct `ErrorCode` aliases for generic code
+
 ---
 
 ## Card + Filesystem Info
@@ -283,6 +288,9 @@ and must not call back into AsyncSD APIs or `end()` to avoid deadlocks/UAF.
 | ---------------------- | ------------------------------------------ |
 | `01_spi_cli_control`   | Interactive CLI with live status LED and CD reporting |
 
+Useful CLI diagnostics: `help`, `version`, `status`, `config`, `health`, and `info`.
+`info` enqueues the real card/filesystem information request.
+
 ---
 
 ## Testing
@@ -305,6 +313,18 @@ include/AsyncSD/     # Public headers
 src/                # Implementation
 examples/           # Example apps
 ```
+
+---
+
+## API Documentation
+
+Doxygen configuration is provided in `Doxyfile`. Generate local API docs with:
+
+```bash
+doxygen Doxyfile
+```
+
+Generated HTML is written under `docs/doxygen/html`.
 
 ---
 

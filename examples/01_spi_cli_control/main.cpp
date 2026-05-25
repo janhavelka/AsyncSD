@@ -4,7 +4,9 @@
  *
  * Commands:
  *   help
+ *   version
  *   status
+ *   config
  *   health
  *   info
  *   mount
@@ -194,6 +196,21 @@ static const char* cardTypeToStr(AsyncSD::CardType type) {
     default:
       return "Unknown";
   }
+}
+
+static const char* transportToStr(AsyncSD::TransportType type) {
+  switch (type) {
+    case AsyncSD::TransportType::Spi:
+      return "SPI";
+    case AsyncSD::TransportType::Sdmmc:
+      return "SDMMC";
+    default:
+      return "Unknown";
+  }
+}
+
+static const char* boolToStr(bool value) {
+  return value ? "true" : "false";
 }
 
 static const char* statusColor(AsyncSD::SdStatus st) {
@@ -408,17 +425,18 @@ static AsyncSD::RenameMode parseRenameMode(const char* modeStr) {
   return AsyncSD::RenameMode::FailIfExists;
 }
 
+static void printVersion();
+
 static void printHelp() {
   Serial.println();
   Serial.printf("%s=== AsyncSD CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
-  Serial.print(F("Version: "));
-  Serial.println(AsyncSD::VERSION);
-  Serial.print(F("Built:   "));
-  Serial.println(AsyncSD::BUILD_TIMESTAMP);
+  printVersion();
   Serial.println();
   printHelpSection("Common");
   printHelpItem("help", "Show this help");
+  printHelpItem("version", "Print build/version metadata");
   printHelpItem("status", "Print card/filesystem status");
+  printHelpItem("config", "Print active runtime configuration");
   printHelpItem("health", "Print worker and error health");
   printHelpItem("info", "Query card and filesystem info");
   printHelpItem("mount", "Request mount");
@@ -443,6 +461,18 @@ static void printHelp() {
   printHelpItem("stress <count>", "Append N lines to /stress.txt");
   Serial.println(F("Mode flags: r w a c t x (read/write/append/create/truncate/exclusive)"));
   Serial.println();
+}
+
+static void printVersion() {
+  Serial.print(F("Version: "));
+  Serial.println(AsyncSD::VERSION);
+  Serial.print(F("Built:   "));
+  Serial.println(AsyncSD::BUILD_TIMESTAMP);
+  Serial.print(F("Commit:  "));
+  Serial.print(AsyncSD::GIT_COMMIT);
+  Serial.print(F(" ("));
+  Serial.print(AsyncSD::GIT_STATUS);
+  Serial.println(F(")"));
 }
 
 static void printStatus() {
@@ -471,6 +501,51 @@ static void printStatus() {
                   static_cast<unsigned long>(pct),
                   LOG_COLOR_RESET);
   }
+}
+
+static void printConfig() {
+  const AsyncSD::SdCardConfig& cfg = g_sd.config();
+  Serial.println(F("=== AsyncSD Config ==="));
+  Serial.print(F("transport="));
+  Serial.print(transportToStr(cfg.transport));
+  Serial.print(F(" mountPoint="));
+  Serial.println(cfg.mountPoint ? cfg.mountPoint : "-");
+  Serial.print(F("pinCs="));
+  Serial.print(cfg.pinCs);
+  Serial.print(F(" mosi="));
+  Serial.print(cfg.pinMosi);
+  Serial.print(F(" miso="));
+  Serial.print(cfg.pinMiso);
+  Serial.print(F(" sck="));
+  Serial.println(cfg.pinSck);
+  Serial.print(F("cdPin="));
+  Serial.print(cfg.cdPin);
+  Serial.print(F(" cdActiveLow="));
+  Serial.print(boolToStr(cfg.cdActiveLow));
+  Serial.print(F(" autoInitSpi="));
+  Serial.print(boolToStr(cfg.autoInitSpi));
+  Serial.print(F(" spiShared="));
+  Serial.println(boolToStr(cfg.spiShared));
+  Serial.print(F("autoMount="));
+  Serial.print(boolToStr(cfg.autoMount));
+  Serial.print(F(" useWorkerTask="));
+  Serial.print(boolToStr(cfg.useWorkerTask));
+  Serial.print(F(" workerBudgetUs="));
+  Serial.print(cfg.workerBudgetUs);
+  Serial.print(F(" workerStallMs="));
+  Serial.println(cfg.workerStallMs);
+  Serial.print(F("requestQueueDepth="));
+  Serial.print(cfg.requestQueueDepth);
+  Serial.print(F(" resultQueueDepth="));
+  Serial.print(cfg.resultQueueDepth);
+  Serial.print(F(" maxOpenFiles="));
+  Serial.println(cfg.maxOpenFiles);
+  Serial.print(F("maxPathLength="));
+  Serial.print(cfg.maxPathLength);
+  Serial.print(F(" ioChunkBytes="));
+  Serial.print(cfg.ioChunkBytes);
+  Serial.print(F(" maxCopyWriteBytes="));
+  Serial.println(cfg.maxCopyWriteBytes);
 }
 
 static void printHealth() {
@@ -605,6 +680,12 @@ static void startStress(uint32_t count) {
                                         AsyncSD::OpenMode::Write |
                                             AsyncSD::OpenMode::Create |
                                             AsyncSD::OpenMode::Append);
+  if (g_stress.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+    LOGE("Stress open request failed");
+    g_stress.active = false;
+    g_stress.stage = StressStage::Idle;
+    return;
+  }
   LOGI("Stress started, request id=%lu", static_cast<unsigned long>(g_stress.pendingId));
 }
 
@@ -618,6 +699,11 @@ static void enqueueStressWrite() {
   g_stress.pendingId =
       g_sd.requestWrite(g_stress.handle, AsyncSD::APPEND_OFFSET,
                         g_stress.buffer, static_cast<size_t>(n));
+  if (g_stress.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+    LOGE("Stress write request failed");
+    g_stress.active = false;
+    g_stress.stage = StressStage::Idle;
+  }
 }
 
 static void handleStressResult(const AsyncSD::RequestResult& res) {
@@ -645,6 +731,11 @@ static void handleStressResult(const AsyncSD::RequestResult& res) {
       if (g_stress.remaining == 0) {
         g_stress.stage = StressStage::Syncing;
         g_stress.pendingId = g_sd.requestSync(g_stress.handle);
+        if (g_stress.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+          LOGE("Stress sync request failed");
+          g_stress.active = false;
+          g_stress.stage = StressStage::Idle;
+        }
       } else {
         enqueueStressWrite();
       }
@@ -652,6 +743,11 @@ static void handleStressResult(const AsyncSD::RequestResult& res) {
     case StressStage::Syncing:
       g_stress.stage = StressStage::Closing;
       g_stress.pendingId = g_sd.requestClose(g_stress.handle);
+      if (g_stress.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+        LOGE("Stress close request failed");
+        g_stress.active = false;
+        g_stress.stage = StressStage::Idle;
+      }
       break;
     case StressStage::Closing:
       g_stress.active = false;
@@ -686,6 +782,11 @@ static void handleCatResult(const AsyncSD::RequestResult& res) {
         }
         g_cat.pendingId = g_sd.requestRead(g_cat.handle, g_cat.totalRead,
                                            g_cat.buffer, chunk);
+        if (g_cat.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+          LOGE("Cat read request failed");
+          g_cat.active = false;
+          g_cat.stage = CatStage::Idle;
+        }
       }
       break;
     case CatStage::Reading:
@@ -698,6 +799,11 @@ static void handleCatResult(const AsyncSD::RequestResult& res) {
         LOGI("Cat done, %lu bytes", static_cast<unsigned long>(g_cat.totalRead));
         g_cat.stage = CatStage::Closing;
         g_cat.pendingId = g_sd.requestClose(g_cat.handle);
+        if (g_cat.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+          LOGE("Cat close request failed");
+          g_cat.active = false;
+          g_cat.stage = CatStage::Idle;
+        }
       } else {
         uint32_t chunk = g_cat.maxBytes - g_cat.totalRead;
         if (chunk > sizeof(g_cat.buffer)) {
@@ -705,6 +811,11 @@ static void handleCatResult(const AsyncSD::RequestResult& res) {
         }
         g_cat.pendingId = g_sd.requestRead(g_cat.handle, g_cat.totalRead,
                                            g_cat.buffer, chunk);
+        if (g_cat.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+          LOGE("Cat read request failed");
+          g_cat.active = false;
+          g_cat.stage = CatStage::Idle;
+        }
       }
       break;
     case CatStage::Closing:
@@ -788,8 +899,12 @@ static void processLine(char* line) {
 
   if (strcmp(cmd, "help") == 0) {
     printHelp();
+  } else if (strcmp(cmd, "version") == 0) {
+    printVersion();
   } else if (strcmp(cmd, "status") == 0) {
     printStatus();
+  } else if (strcmp(cmd, "config") == 0) {
+    printConfig();
   } else if (strcmp(cmd, "health") == 0) {
     printHealth();
   } else if (strcmp(cmd, "info") == 0) {
@@ -829,6 +944,10 @@ static void processLine(char* line) {
                            buf->data, length);
       buf->id = id;
       buf->len = length;
+      if (id == AsyncSD::INVALID_REQUEST_ID) {
+        LOGE("Read request failed");
+        releaseBuffer(id);
+      }
     }
   } else if (strcmp(cmd, "write") == 0) {
     char* h = strtok(nullptr, " ");
@@ -860,6 +979,10 @@ static void processLine(char* line) {
         g_sd.requestWrite(static_cast<AsyncSD::FileHandle>(handle), offset,
                           buf->data, len);
     buf->id = id;
+    if (id == AsyncSD::INVALID_REQUEST_ID) {
+      LOGE("Write request failed");
+      releaseBuffer(id);
+    }
   } else if (strcmp(cmd, "writecopy") == 0) {
     char* h = strtok(nullptr, " ");
     char* off = strtok(nullptr, " ");
@@ -940,6 +1063,12 @@ static void processLine(char* line) {
       }
     }
     g_cat.pendingId = g_sd.requestOpen(path, AsyncSD::OpenMode::Read);
+    if (g_cat.pendingId == AsyncSD::INVALID_REQUEST_ID) {
+      LOGE("Cat open request failed");
+      g_cat.active = false;
+      g_cat.stage = CatStage::Idle;
+      return;
+    }
     LOGI("Cat %s (max %lu bytes)", path, static_cast<unsigned long>(g_cat.maxBytes));
   } else if (strcmp(cmd, "stress") == 0) {
     char* cnt = strtok(nullptr, " ");
