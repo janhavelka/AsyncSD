@@ -2,7 +2,7 @@
 # Generated and maintained for unified API documentation.
 
 PROJECT_NAME           = "AsyncSD"
-PROJECT_NUMBER         = "1.3.0"
+PROJECT_NUMBER         = "1.4.0"
 PROJECT_BRIEF          = "AsyncSD embedded library API documentation"
 OUTPUT_DIRECTORY       = docs/doxygen
 CREATE_SUBDIRS         = NO

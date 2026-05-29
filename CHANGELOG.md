@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-29
+
 ### Added
 - Added public `PresenceInfo` snapshots via `presenceInfo()` and `RequestResult::presenceInfo` so applications can read debounced CD-pin state without bypassing AsyncSD presence logic
 - Added `requestInfo(bool includeUsage, ...)` so applications can refresh card/capacity metadata without running the potentially slow FAT used/free scan on every status refresh
@@ -22,9 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended the CLI `status` and `info` output to report CD pin configuration, raw level, and debounced logical presence when CD is configured
 - Repository/homepage metadata and changelog compare links now point at the
   maintained GitHub repository instead of placeholder URLs.
-
-### Fixed
-- Nothing yet
 
 ## [1.3.0] - 2026-03-01
 
@@ -140,7 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Compile-only examples
 
-[Unreleased]: https://github.com/janhavelka/AsyncSD/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/janhavelka/AsyncSD/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/janhavelka/AsyncSD/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/janhavelka/AsyncSD/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/janhavelka/AsyncSD/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/janhavelka/AsyncSD/compare/v1.1.2...v1.2.0

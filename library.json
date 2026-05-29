@@ -1,6 +1,6 @@
 {
   "name": "AsyncSD",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Nonblocking, bounded SD card library for ESP32-S2/S3 using SdFat v2 (FAT32 + exFAT).",
   "keywords": [
     "esp32",
