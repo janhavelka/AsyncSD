@@ -2,6 +2,11 @@
 
 AsyncSD is a **nonblocking, bounded SD card library** for **ESP32-S2/S3** using the Arduino framework and PlatformIO. It performs **blocking SdFat operations in a worker task** (or an external worker step), so public APIs return quickly and predictably.
 
+The latest published release is
+[v1.4.0](https://github.com/janhavelka/AsyncSD/releases/tag/v1.4.0). Current
+development notes belong under [Unreleased](CHANGELOG.md#unreleased); use the
+documentation at the release tag when consuming the published version.
+
 **Key features**
 - SdFat v2 (`SdFs` + `FsFile`) with **FAT32 + exFAT** support
 - Optional **CD pin** with debounce and interrupt flagging

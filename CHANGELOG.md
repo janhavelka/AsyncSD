@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+
 ## [1.4.0] - 2026-05-29
 
 ### Added
@@ -62,20 +64,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed Task Watchdog Timer crash during `requestInfo()` on large FAT32 cards: `freeClusterCount()` scans the entire FAT table in a tight loop, starving the IDLE task — now temporarily disables core WDT around the scan
 
-## [1.1.1] - 2026-02-15
+### Earlier development work
 
-### Added
+Includes earlier development work that had no separate published release.
+
+#### Added
 - Added `requestListDir(path, entries, maxEntries, cb, user)` async directory listing API
 - Added `DirEntry` struct (name, size, isDir) and `ListDir` to `RequestType`/`Operation` enums
 - Added CLI commands: `ls [path]`, `touch <path>`, `cat <path> [maxlen]`
 - Added `errorCodeToStr()` and `requestTypeToStr()` helpers to CLI example
 - Added named error codes and detail field to CLI result output
 
-### Changed
+#### Changed
 - `performMount()` now forces unmount-then-remount when already mounted, enabling clean re-initialization after card re-insertion
 - Info request error detail now uses packed `(sdErrorData << 8) | sdErrorCode` for richer diagnostics
 
-### Fixed
+#### Fixed
 - Fixed `FsFile::open()` flag truncation on ESP32: `toSdFatFlags()` returned `uint8_t` but ESP32 fcntl flags (`O_CREAT=0x200`, `O_TRUNC=0x400`, `O_EXCL=0x800`) exceed 8 bits — changed to `int`
 - Fixed `FsFile::open()` using static `FsVolume::m_cwv` pointer (2-arg form) which was not reliably set — changed all 5 call sites to explicit 3-arg `open(volume, path, flags)` form
 - Fixed `requestListDir()` returning 0 entries: `bytesDone` was captured before the switch statement but `ListDir` case wrote count to `req.processed` without updating `bytesDone`
@@ -116,9 +120,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed queue counter drift handling by self-healing request/result queue heads when counters and slots diverge
 - Fixed missing filesystem error detail propagation for multiple I/O operations (`open/read/write/sync/mkdir/remove/stat`)
 
-## [1.0.0] - 2026-02-02
+### Earlier development work
 
-### Added
+Includes earlier development work that had no separate published release.
+
+#### Added
 - AsyncSD nonblocking SD card manager with worker task or external worker step
 - SdFat v2 (`SdFs` + `FsFile`) support for FAT32 + exFAT
 - SPI transport with bus guard and SDMMC stub
@@ -130,13 +136,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI example (`01_spi_cli_control`)
 - Host tests for debounce/backoff and robustness helpers
 
-### Changed
+#### Changed
 - Worker callbacks disabled by default (optional via `enableWorkerCallbacks`)
 - Shutdown timeout faults and safe-leaks resources (no task kill)
 - Result queue overflow increments dropped counter and records `ResultEnqueue`
 - `begin()` uses nothrow allocations and fails gracefully on OOM
 
-### Removed
+#### Removed
 - Compile-only examples
 
 [Unreleased]: https://github.com/janhavelka/AsyncSD/compare/v1.4.0...HEAD
@@ -144,7 +150,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [1.3.0]: https://github.com/janhavelka/AsyncSD/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/janhavelka/AsyncSD/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/janhavelka/AsyncSD/compare/v1.1.2...v1.2.0
-[1.1.2]: https://github.com/janhavelka/AsyncSD/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/janhavelka/AsyncSD/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/janhavelka/AsyncSD/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/janhavelka/AsyncSD/releases/tag/v1.0.0
+[1.1.2]: https://github.com/janhavelka/AsyncSD/compare/v1.1.0...v1.1.2
+[1.1.0]: https://github.com/janhavelka/AsyncSD/releases/tag/v1.1.0
