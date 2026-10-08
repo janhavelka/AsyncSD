@@ -1,5 +1,7 @@
 # AGENTS.md - AsyncSD Embedded Engineering Guidelines
 
+Always synchronize Git with the intended upstream branch before starting work by fetching and fast-forwarding safely, preserving existing local changes and reporting any divergence, conflict, or synchronization failure.
+
 ## PlatformIO
 
 Before editing, fetch remotes and fast-forward the newest intended working
