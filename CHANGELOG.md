@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added `CLAUDE.md` to load the shared project instructions from `AGENTS.md`.
 - Clarified agent ownership, one branch per promptset, and automatic commit/push of verified work chunks.
 
 ## [1.4.0] - 2026-05-29
