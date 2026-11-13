@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Unified author, copyright and contact metadata: THYMOS Solution s.r.o., Jan Havelka, info@thymos.cz.
 - Added `CLAUDE.md` to load the shared project instructions from `AGENTS.md`.
 - Clarified agent ownership, one branch per promptset, and automatic commit/push of verified work chunks.
 

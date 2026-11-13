@@ -2,10 +2,10 @@
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Default owner for everything
-* @YOUR_GITHUB_USERNAME
+* @janhavelka
 
 # Public API requires careful review
-/include/ @YOUR_GITHUB_USERNAME
+/include/ @janhavelka
 
 # CI configuration
-/.github/ @YOUR_GITHUB_USERNAME
+/.github/ @janhavelka
